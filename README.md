@@ -33,6 +33,8 @@ brew tap kkw-h/llc
 brew install llc
 ```
 
+安装后自动启用 Shell 补全功能。
+
 ### 一键安装脚本
 
 ```bash

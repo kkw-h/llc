@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bufio"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/user"
@@ -10,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // FileInfo holds file information
@@ -19,6 +23,24 @@ type FileInfo struct {
 	Info    os.FileInfo
 	Comment string
 	IsDir   bool
+}
+
+// fileInfoPool is a sync.Pool for reusing FileInfo slices
+var fileInfoPool = sync.Pool{
+	New: func() interface{} {
+		return make([]FileInfo, 0, 256)
+	},
+}
+
+// getFileInfoSlice gets a FileInfo slice from the pool
+func getFileInfoSlice() []FileInfo {
+	return fileInfoPool.Get().([]FileInfo)
+}
+
+// putFileInfoSlice returns a FileInfo slice to the pool
+func putFileInfoSlice(s []FileInfo) {
+	// Reset the slice (keep the capacity, clear the elements)
+	fileInfoPool.Put(s[:0])
 }
 
 // printVersion prints version information
@@ -42,21 +64,28 @@ func printHelp() {
 	fmt.Println("  -F              在文件名后添加类型指示符 (*/=@|)")
 	fmt.Println("  -L              跟随符号链接，显示目标文件信息")
 	fmt.Println("  -t              按修改时间排序（最新的在前）")
+	fmt.Println("  -u              按访问时间排序")
+	fmt.Println("  -U              按创建时间排序")
 	fmt.Println("  -S              按文件大小排序（最大的在前）")
+	fmt.Println("  --sort=ext      按扩展名排序")
 	fmt.Println("  -r              反向排序")
 	fmt.Println("  -R              递归列出子目录")
+	fmt.Println("  --tree          树形输出")
+	fmt.Println("  --json          JSON 格式输出")
+	fmt.Println("  --csv           CSV 格式输出")
 	fmt.Println("  --group-directories-first  目录排在文件前面")
 	fmt.Println("  --ignore=PATTERN   忽略匹配的文件 (支持 * 和 ? 通配符)")
+	fmt.Println("  --gitignore     使用 .gitignore 规则")
 	fmt.Println("  --time-style=STYLE  时间显示格式: default, iso, long-iso, full-iso")
 	fmt.Println("  --color=WHEN    颜色输出: always, auto, never")
 	fmt.Println("  --no-color      禁用颜色输出")
-	fmt.Println("  -e FILE -comment \"TEXT\"  设置文件注释")
+	fmt.Println("  -e FILE \"TEXT\"  设置文件注释")
 	fmt.Println("  --help          显示帮助信息")
 	fmt.Println("  --version       显示版本信息")
 	fmt.Println("")
 	fmt.Println("配置文件 (~/.llcrc):")
 	fmt.Println("  color = always|auto|never")
-	fmt.Println("  sort = name|time|size")
+	fmt.Println("  sort = name|time|access|create|size|ext")
 	fmt.Println("  group-directories-first = true|false")
 	fmt.Println("  human-readable = true|false")
 	fmt.Println("  show-hidden = true|false")
@@ -230,8 +259,20 @@ func sortFiles(files []FileInfo, sortBy string, reverse, groupDirsFirst bool) {
 		switch sortBy {
 		case "time":
 			result = files[i].Info.ModTime().After(files[j].Info.ModTime())
+		case "access":
+			result = getAccessTime(files[i].Info).After(getAccessTime(files[j].Info))
+		case "create":
+			result = getCreateTime(files[i].Info).After(getCreateTime(files[j].Info))
 		case "size":
 			result = files[i].Info.Size() > files[j].Info.Size()
+		case "ext":
+			ext1 := filepath.Ext(files[i].Name)
+			ext2 := filepath.Ext(files[j].Name)
+			if ext1 == ext2 {
+				result = files[i].Name < files[j].Name
+			} else {
+				result = ext1 < ext2
+			}
 		default: // name
 			result = files[i].Name < files[j].Name
 		}
@@ -243,6 +284,22 @@ func sortFiles(files []FileInfo, sortBy string, reverse, groupDirsFirst bool) {
 	}
 
 	sort.Slice(files, less)
+}
+
+// getAccessTime returns the access time from FileInfo
+func getAccessTime(info os.FileInfo) time.Time {
+	if sys, ok := info.Sys().(*syscall.Stat_t); ok {
+		return time.Unix(sys.Atim.Sec, sys.Atim.Nsec)
+	}
+	return info.ModTime()
+}
+
+// getCreateTime returns the creation time from FileInfo
+func getCreateTime(info os.FileInfo) time.Time {
+	if sys, ok := info.Sys().(*syscall.Stat_t); ok {
+		return time.Unix(sys.Ctim.Sec, sys.Ctim.Nsec)
+	}
+	return info.ModTime()
 }
 
 // fetchCommentsParallel fetches comments concurrently
@@ -305,7 +362,7 @@ func listSingleColumn(dirPath string, showAll, showAlmostAll bool, sortBy string
 
 // collectFiles collects file information from directory entries
 func collectFiles(entries []os.DirEntry, dirPath string, showAll, showAlmostAll bool, ignorePatterns []string) []FileInfo {
-	var files []FileInfo
+	files := getFileInfoSlice()
 
 	for _, entry := range entries {
 		name := entry.Name()
@@ -441,4 +498,135 @@ func getSubdirs(entries []os.DirEntry, dirPath string, showAll, showAlmostAll bo
 	}
 
 	return result
+}
+
+// loadGitignore reads .gitignore file and returns patterns
+func loadGitignore(dirPath string) ([]string, error) {
+	gitignorePath := filepath.Join(dirPath, ".gitignore")
+	file, err := os.Open(gitignorePath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var patterns []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		patterns = append(patterns, line)
+	}
+	return patterns, scanner.Err()
+}
+
+// listTree outputs directory in tree format
+func listTree(dirPath string, showAll, showAlmostAll bool, sortBy string, reverseSort bool, ignorePatterns []string, groupDirsFirst, followSymlinks bool, prefix string) error {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return fmt.Errorf("cannot open directory '%s': %v", dirPath, err)
+	}
+
+	files := collectFiles(entries, dirPath, showAll, showAlmostAll, ignorePatterns)
+	sortFiles(files, sortBy, reverseSort, groupDirsFirst)
+
+	for i, file := range files {
+		isLast := i == len(files)-1
+		connector := "├── "
+		if isLast {
+			connector = "└── "
+		}
+
+		name := file.Name
+		if file.IsDir {
+			name += "/"
+		}
+
+		fmt.Printf("%s%s%s\n", prefix, connector, name)
+
+		if file.IsDir {
+			extension := "│   "
+			if isLast {
+				extension = "    "
+			}
+			listTree(file.Path, showAll, showAlmostAll, sortBy, reverseSort, ignorePatterns, groupDirsFirst, followSymlinks, prefix+extension)
+		}
+	}
+
+	return nil
+}
+
+// JSONOutput represents JSON output structure
+type JSONOutput struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	Mode    string `json:"mode"`
+	ModTime string `json:"modTime"`
+	IsDir   bool   `json:"isDir"`
+	Comment string `json:"comment,omitempty"`
+}
+
+// outputJSON outputs directory listing in JSON format
+func outputJSON(dirPath string, showAll, showAlmostAll bool, sortBy string, reverseSort bool, ignorePatterns []string, groupDirsFirst bool) error {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return fmt.Errorf("cannot open directory '%s': %v", dirPath, err)
+	}
+
+	files := collectFiles(entries, dirPath, showAll, showAlmostAll, ignorePatterns)
+	sortFiles(files, sortBy, reverseSort, groupDirsFirst)
+	comments := fetchCommentsParallel(files)
+
+	var outputs []JSONOutput
+	for i, file := range files {
+		outputs = append(outputs, JSONOutput{
+			Name:    file.Name,
+			Path:    file.Path,
+			Size:    file.Info.Size(),
+			Mode:    file.Info.Mode().String(),
+			ModTime: file.Info.ModTime().Format(time.RFC3339),
+			IsDir:   file.IsDir,
+			Comment: comments[i],
+		})
+	}
+
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(outputs)
+}
+
+// outputCSV outputs directory listing in CSV format
+func outputCSV(dirPath string, showAll, showAlmostAll bool, sortBy string, reverseSort bool, ignorePatterns []string, groupDirsFirst bool) error {
+	entries, err := os.ReadDir(dirPath)
+	if err != nil {
+		return fmt.Errorf("cannot open directory '%s': %v", dirPath, err)
+	}
+
+	files := collectFiles(entries, dirPath, showAll, showAlmostAll, ignorePatterns)
+	sortFiles(files, sortBy, reverseSort, groupDirsFirst)
+	comments := fetchCommentsParallel(files)
+
+	writer := csv.NewWriter(os.Stdout)
+	defer writer.Flush()
+
+	// Write header
+	writer.Write([]string{"Name", "Path", "Size", "Mode", "ModTime", "IsDir", "Comment"})
+
+	// Write data
+	for i, file := range files {
+		writer.Write([]string{
+			file.Name,
+			file.Path,
+			strconv.FormatInt(file.Info.Size(), 10),
+			file.Info.Mode().String(),
+			file.Info.ModTime().Format(time.RFC3339),
+			strconv.FormatBool(file.IsDir),
+			comments[i],
+		})
+	}
+
+	return nil
 }

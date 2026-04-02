@@ -518,3 +518,161 @@ func BenchmarkShouldIgnore(b *testing.B) {
 		shouldIgnore("test.log", patterns)
 	}
 }
+
+// TestListDirectory tests the listDirectory function
+func TestListDirectory(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create test files
+	files := []string{"a.txt", "b.go", "c.md"}
+	for _, f := range files {
+		path := filepath.Join(tmpDir, f)
+		if err := os.WriteFile(path, []byte("test"), 0644); err != nil {
+			t.Fatalf("Failed to create test file: %v", err)
+		}
+	}
+
+	// Test basic listing
+	t.Run("basic listing", func(t *testing.T) {
+		// Just verify it doesn't panic
+		err := listDirectory(tmpDir, false, false, false, "name", false, false, false, false, "", []string{}, false, false)
+		if err != nil {
+			t.Errorf("listDirectory failed: %v", err)
+		}
+	})
+}
+
+// TestListRecursive tests the listRecursive function
+func TestListRecursive(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create directory structure
+	subDir := filepath.Join(tmpDir, "subdir")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdir: %v", err)
+	}
+
+	// Create files
+	os.WriteFile(filepath.Join(tmpDir, "root.txt"), []byte("test"), 0644)
+	os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("test"), 0644)
+
+	// Test recursive listing
+	t.Run("recursive listing", func(t *testing.T) {
+		visited := make(map[string]bool)
+		err := listRecursive(tmpDir, false, false, false, "name", false, false, false, false, "", []string{}, false, false, false, 0, visited)
+		if err != nil {
+			t.Errorf("listRecursive failed: %v", err)
+		}
+	})
+}
+
+// TestLoadGitignore tests the loadGitignore function
+func TestLoadGitignore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create .gitignore file
+	gitignoreContent := `# Test gitignore
+*.log
+*.tmp
+node_modules/
+`
+	gitignorePath := filepath.Join(tmpDir, ".gitignore")
+	if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
+		t.Fatalf("Failed to create .gitignore: %v", err)
+	}
+
+	patterns, err := loadGitignore(tmpDir)
+	if err != nil {
+		t.Fatalf("loadGitignore failed: %v", err)
+	}
+
+	if len(patterns) != 3 {
+		t.Errorf("Expected 3 patterns, got %d", len(patterns))
+	}
+
+	expected := []string{"*.log", "*.tmp", "node_modules/"}
+	for i, exp := range expected {
+		if patterns[i] != exp {
+			t.Errorf("Pattern %d: expected %q, got %q", i, exp, patterns[i])
+		}
+	}
+}
+
+// TestOutputJSON tests the JSON output function
+func TestOutputJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("content"), 0644)
+
+	err := outputJSON(tmpDir, false, false, "name", false, []string{}, false)
+	if err != nil {
+		t.Errorf("outputJSON failed: %v", err)
+	}
+}
+
+// TestOutputCSV tests the CSV output function
+func TestOutputCSV(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("content"), 0644)
+
+	err := outputCSV(tmpDir, false, false, "name", false, []string{}, false)
+	if err != nil {
+		t.Errorf("outputCSV failed: %v", err)
+	}
+}
+
+// TestListTree tests the tree output function
+func TestListTree(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Create directory structure
+	subDir := filepath.Join(tmpDir, "subdir")
+	os.MkdirAll(subDir, 0755)
+	os.WriteFile(filepath.Join(tmpDir, "root.txt"), []byte("test"), 0644)
+	os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("test"), 0644)
+
+	err := listTree(tmpDir, false, false, "name", false, []string{}, false, false, "")
+	if err != nil {
+		t.Errorf("listTree failed: %v", err)
+	}
+}
+
+// TestCommentCache tests the xattr caching functionality
+func TestCommentCache(t *testing.T) {
+	// Create a temporary file
+	tmpFile, err := os.CreateTemp("", "llc_cache_test_*")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	defer os.Remove(tmpFile.Name())
+	tmpFile.Close()
+
+	testComment := "cached comment"
+
+	// Clear cache before test
+	globalCommentCache.clear()
+
+	// Set comment
+	if err := unix.Setxattr(tmpFile.Name(), xattrCommentName, []byte(testComment), 0); err != nil {
+		t.Skipf("xattr not supported: %v", err)
+	}
+
+	// First get - should hit filesystem
+	comment1 := getComment(tmpFile.Name())
+	if comment1 != testComment {
+		t.Errorf("First get: expected %q, got %q", testComment, comment1)
+	}
+
+	// Second get - should hit cache
+	comment2 := getComment(tmpFile.Name())
+	if comment2 != testComment {
+		t.Errorf("Second get: expected %q, got %q", testComment, comment2)
+	}
+
+	// Verify cache has entry
+	if _, found := globalCommentCache.get(tmpFile.Name()); !found {
+		t.Error("Expected cache to have entry")
+	}
+
+	// Clean up
+	unix.Removexattr(tmpFile.Name(), xattrCommentName)
+}

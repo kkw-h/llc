@@ -1,0 +1,154 @@
+.TH LLC 1 "April 2025" "llc 2.0.2" "User Commands"
+.SH NAME
+llc \- enhanced ls command with file comments support
+.SH SYNOPSIS
+.B llc
+[\fIOPTIONS\fR] [\fIPATH\fR]
+.SH DESCRIPTION
+.B llc
+is an enhanced version of \fBls -l\fR that displays file comments at the end of each line.
+.PP
+On Linux, comments are stored in xattr extended attributes (user.llc.comment).
+On macOS, comments are stored in Spotlight metadata (kMDItemFinderComment).
+.SH OPTIONS
+.TP
+.BR \-a
+Show all files including hidden files (. and ..)
+.TP
+.BR \-A
+Show all files including hidden files (except . and ..)
+.TP
+.BR \-1
+Single column output (one filename per line)
+.TP
+.BR \-i
+Show file inode numbers
+.TP
+.BR \-d
+List directory itself instead of contents
+.TP
+.BR \-h
+Display file sizes in human-readable format (KB, MB, GB)
+.TP
+.BR \-F
+Add type indicators after filenames (/ for directories, * for executables, @ for symlinks, = for sockets, | for FIFOs)
+.TP
+.BR \-L
+Follow symbolic links and display target file information
+.TP
+.BR \-t
+Sort by modification time (newest first)
+.TP
+.BR \-u
+Sort by access time
+.TP
+.BR \-U
+Sort by creation time
+.TP
+.BR \-S
+Sort by file size (largest first)
+.TP
+.BR \-\-sort\-ext
+Sort by file extension
+.TP
+.BR \-r
+Reverse sort order
+.TP
+.BR \-R
+List subdirectories recursively
+.TP
+.BR \-\-tree
+Display directory contents in a tree-like format
+.TP
+.BR \-\-json
+Output in JSON format
+.TP
+.BR \-\-csv
+Output in CSV format
+.TP
+.BR \-\-group\-directories\-first
+List directories before files
+.TP
+.BR \-\-ignore\=\fIPATTERN\fR
+Ignore files matching the pattern (supports * and ? wildcards)
+.TP
+.BR \-\-gitignore
+Use .gitignore rules from the directory
+.TP
+.BR \-\-time\-style\=\fISTYLE\fR
+Time display format: default, iso, long-iso, full-iso
+.TP
+.BR \-\-color\=\fIWHEN\fR
+Color output: always, auto, never
+.TP
+.BR \-\-no\-color
+Disable color output
+.TP
+.BR \-e \fIFILE\fR \fI"COMMENT"\fR
+Set a comment for the specified file
+.TP
+.BR \-\-version
+Display version information
+.TP
+.BR \-\-help
+Display help message
+.SH CONFIGURATION FILE
+Configuration can be stored in ~/.llcrc:
+.PP
+.nf
+color = auto
+sort = name
+group-directories-first = true
+human-readable = true
+show-hidden = false
+time-style = default
+ignore = *.log
+ignore = *.tmp
+.fi
+.SH COLOR CODES
+.TP
+.B Blue bold
+Directories
+.TP
+.B Green
+Executable files
+.TP
+.B Cyan
+Symbolic links
+.TP
+.B Gray
+File comments
+.SH EXAMPLES
+.TP
+List current directory:
+.B llc
+.TP
+Show all files including hidden:
+.B llc -a
+.TP
+Human-readable sizes, sorted by time:
+.B llc -ht
+.TP
+Recursive tree view:
+.B llc --tree
+.TP
+JSON output:
+.B llc --json
+.TP
+Set file comment:
+.B llc -e file.txt "Important document"
+.SH EXIT STATUS
+.TP
+.B 0
+Success
+.TP
+.B 1
+General error
+.SH SEE ALSO
+.BR ls (1),
+.BR getfattr (1),
+.BR setfattr (1)
+.SH AUTHOR
+kkw-h <kkw@linux.do>
+.SH HOMEPAGE
+https://github.com/kkw-h/llc

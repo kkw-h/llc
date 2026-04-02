@@ -1,0 +1,95 @@
+name: Update Homebrew Formula
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-formula:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout llc repo
+        uses: actions/checkout@v4
+
+      - name: Checkout homebrew-llc repo
+        uses: actions/checkout@v4
+        with:
+          repository: kkw-h/homebrew-llc
+          path: homebrew-llc
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Calculate SHA256 checksums
+        id: checksums
+        run: |
+          VERSION=${{ github.event.release.tag_name }}
+          BASE_URL="https://github.com/kkw-h/llc/releases/download/${VERSION}"
+
+          # Download and calculate checksums
+          curl -sL -o llc-linux-amd64 "${BASE_URL}/llc-linux-amd64"
+          curl -sL -o llc-linux-arm64 "${BASE_URL}/llc-linux-arm64"
+          curl -sL -o llc-darwin-amd64 "${BASE_URL}/llc-darwin-amd64"
+          curl -sL -o llc-darwin-arm64 "${BASE_URL}/llc-darwin-arm64"
+
+          LINUX_AMD64_SHA=$(sha256sum llc-linux-amd64 | cut -d' ' -f1)
+          LINUX_ARM64_SHA=$(sha256sum llc-linux-arm64 | cut -d' ' -f1)
+          DARWIN_AMD64_SHA=$(sha256sum llc-darwin-amd64 | cut -d' ' -f1)
+          DARWIN_ARM64_SHA=$(sha256sum llc-darwin-arm64 | cut -d' ' -f1)
+
+          echo "linux_amd64_sha=${LINUX_AMD64_SHA}" >> $GITHUB_OUTPUT
+          echo "linux_arm64_sha=${LINUX_ARM64_SHA}" >> $GITHUB_OUTPUT
+          echo "darwin_amd64_sha=${DARWIN_AMD64_SHA}" >> $GITHUB_OUTPUT
+          echo "darwin_arm64_sha=${DARWIN_ARM64_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Update formula
+        run: |
+          VERSION="${{ github.event.release.tag_name }}"
+          # Remove 'v' prefix for formula version
+          FORMULA_VERSION="${VERSION#v}"
+
+          cat > homebrew-llc/Formula/llc.rb << 'EOF'
+          class Llc < Formula
+            desc "Enhanced ls command with file comments support"
+            homepage "https://github.com/kkw-h/llc"
+            version "${FORMULA_VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/kkw-h/llc/releases/download/${VERSION}/llc-darwin-arm64"
+                sha256 "${{ steps.checksums.outputs.darwin_arm64_sha }}"
+              end
+              on_intel do
+                url "https://github.com/kkw-h/llc/releases/download/${VERSION}/llc-darwin-amd64"
+                sha256 "${{ steps.checksums.outputs.darwin_amd64_sha }}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/kkw-h/llc/releases/download/${VERSION}/llc-linux-arm64"
+                sha256 "${{ steps.checksums.outputs.linux_arm64_sha }}"
+              end
+              on_intel do
+                url "https://github.com/kkw-h/llc/releases/download/${VERSION}/llc-linux-amd64"
+                sha256 "${{ steps.checksums.outputs.linux_amd64_sha }}"
+              end
+            end
+
+            def install
+              bin.install Dir["llc-*"].first => "llc"
+            end
+
+            test do
+              assert_match "llc version", shell_output("#{bin}/llc --version")
+            end
+          end
+          EOF
+
+      - name: Commit and push
+        run: |
+          cd homebrew-llc
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/llc.rb
+          git commit -m "Update llc to ${{ github.event.release.tag_name }}"
+          git push
