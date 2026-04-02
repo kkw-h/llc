@@ -3,7 +3,7 @@ import CoreServices
 import Darwin
 
 // 版本信息
-let VERSION = "1.5.0"
+let VERSION = "1.6.0"
 
 // ANSI 颜色代码
 struct Colors {
@@ -52,6 +52,7 @@ struct Config {
     var humanReadable: Bool = false
     var showHidden: Bool = false
     var timeStyle: TimeStyle = .default
+    var ignorePatterns: [String] = []
 
     static func load(from path: String) -> Config {
         var config = Config()
@@ -111,6 +112,8 @@ struct Config {
                 case "full-iso": config.timeStyle = .fullIso
                 default: break
                 }
+            case "ignore":
+                config.ignorePatterns.append(value)
             default:
                 break
             }
@@ -118,6 +121,65 @@ struct Config {
 
         return config
     }
+}
+
+// 扩展 glob 模式获取匹配的文件列表
+func expandGlobPattern(_ pattern: String) -> [String] {
+    let fileManager = FileManager.default
+    let expandedPattern = (pattern as NSString).expandingTildeInPath
+
+    // 分离目录和文件名模式
+    let parentDir = (expandedPattern as NSString).deletingLastPathComponent
+    let filePattern = (expandedPattern as NSString).lastPathComponent
+
+    // 如果目录部分包含通配符，需要递归处理
+    if parentDir.contains("*") || parentDir.contains("?") {
+        // 简化处理：不支持目录部分的通配符
+        return []
+    }
+
+    let searchDir = parentDir.isEmpty ? "." : parentDir
+
+    do {
+        let contents = try fileManager.contentsOfDirectory(atPath: searchDir)
+        var matchingFiles: [String] = []
+
+        for item in contents {
+            if matchesGlobPattern(item, pattern: filePattern) {
+                let fullPath = (searchDir as NSString).appendingPathComponent(item)
+                matchingFiles.append(fullPath)
+            }
+        }
+
+        return matchingFiles.sorted()
+    } catch {
+        return []
+    }
+}
+
+// Glob 匹配函数 - 支持 * 和 ? 通配符
+func matchesGlobPattern(_ string: String, pattern: String) -> Bool {
+    let nsString = string as NSString
+    let nsPattern = pattern as NSString
+    let regexPattern = nsPattern.replacingOccurrences(of: "*", with: ".*")
+                                   .replacingOccurrences(of: "?", with: ".")
+    do {
+        let regex = try NSRegularExpression(pattern: "^\(regexPattern)$", options: [])
+        let range = NSRange(location: 0, length: nsString.length)
+        return regex.firstMatch(in: string, options: [], range: range) != nil
+    } catch {
+        return false
+    }
+}
+
+// 检查文件名是否匹配任何忽略模式
+func shouldIgnoreFile(_ name: String, patterns: [String]) -> Bool {
+    for pattern in patterns {
+        if matchesGlobPattern(name, pattern: pattern) {
+            return true
+        }
+    }
+    return false
 }
 
 // 获取 Finder 注释 - 全局函数避免 actor 隔离问题
@@ -185,6 +247,8 @@ struct llc {
         var singleColumn = false
         var editComment: String? = nil
         var path: String? = nil
+        var followSymlinks = false
+        var ignorePatterns: [String] = config.ignorePatterns
 
         // 应用颜色配置
         configColor = config.color
@@ -195,8 +259,8 @@ struct llc {
         var i = 1
         while i < arguments.count {
             let arg = arguments[i]
-            if arg.hasPrefix("-") && arg.count > 1 && !arg.hasPrefix("--") {
-                // 解析组合选项如 -li
+            if arg.hasPrefix("-") && arg.count > 1 && !arg.hasPrefix("--") && arg != "-e" {
+                // 解析组合选项如 -li (但不包括 -e，因为它需要参数)
                 let flags = arg.dropFirst()
                 for flag in flags {
                     switch flag {
@@ -214,6 +278,7 @@ struct llc {
                     case "R": recursive = true
                     case "l": break // -l 是默认行为，不需要处理
                     case "1": singleColumn = true
+                    case "L": followSymlinks = true
                     default:
                         print("llc: 无效选项 -- '\(flag)'")
                         exit(1)
@@ -260,6 +325,11 @@ struct llc {
             } else if arg == "--help" {
                 printHelp()
                 exit(0)
+            } else if arg.hasPrefix("--ignore=") {
+                let pattern = String(arg.dropFirst("--ignore=".count))
+                if !pattern.isEmpty {
+                    ignorePatterns.append(pattern)
+                }
             } else if !arg.hasPrefix("-") {
                 path = arg
             }
@@ -271,7 +341,21 @@ struct llc {
         let expandedPath = (targetPath as NSString).expandingTildeInPath
 
         if let comment = editComment {
-            setFinderComment(path: expandedPath, comment: comment)
+            // 检查路径是否包含通配符
+            if expandedPath.contains("*") || expandedPath.contains("?") {
+                // 批量设置注释
+                let matchingFiles = expandGlobPattern(expandedPath)
+                if matchingFiles.isEmpty {
+                    print("llc: 没有匹配的文件: \(targetPath)")
+                    exit(1)
+                }
+                for filePath in matchingFiles {
+                    setFinderComment(path: filePath, comment: comment)
+                }
+                print("已设置 \(matchingFiles.count) 个文件的注释")
+            } else {
+                setFinderComment(path: expandedPath, comment: comment)
+            }
             exit(0)
         }
 
@@ -283,23 +367,23 @@ struct llc {
 
         if isDirectory.boolValue {
             if recursive {
-                listDirectoryRecursive(path: expandedPath, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify, singleColumn: singleColumn)
+                listDirectoryRecursive(path: expandedPath, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify, singleColumn: singleColumn, followSymlinks: followSymlinks, ignorePatterns: ignorePatterns)
             } else if listDirectoryItself {
                 if singleColumn {
-                    print(getFileNameWithColor(path: expandedPath))
+                    print(getFileNameWithColor(path: expandedPath, followSymlinks: followSymlinks))
                 } else {
-                    listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode, classify: classify)
+                    listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode, classify: classify, followSymlinks: followSymlinks)
                 }
             } else if singleColumn {
-                listDirectorySingleColumn(path: expandedPath, showHidden: showHidden, showAlmostAll: showAlmostAll, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: groupDirectoriesFirst, classify: classify)
+                listDirectorySingleColumn(path: expandedPath, showHidden: showHidden, showAlmostAll: showAlmostAll, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: groupDirectoriesFirst, classify: classify, followSymlinks: followSymlinks, ignorePatterns: ignorePatterns)
             } else {
-                listDirectory(path: expandedPath, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: groupDirectoriesFirst, showInode: showInode, classify: classify)
+                listDirectory(path: expandedPath, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: groupDirectoriesFirst, showInode: showInode, classify: classify, followSymlinks: followSymlinks, ignorePatterns: ignorePatterns)
             }
         } else {
             if singleColumn {
-                print(getFileNameWithColor(path: expandedPath))
+                print(getFileNameWithColor(path: expandedPath, followSymlinks: followSymlinks))
             } else {
-                listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode, classify: classify)
+                listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode, classify: classify, followSymlinks: followSymlinks)
             }
         }
     }
@@ -320,15 +404,17 @@ struct llc {
         print("  -d              列出目录本身，而非其内容")
         print("  -h, --human-readable  以人类可读格式显示文件大小 (KB, MB, GB)")
         print("  -F              在文件名后添加类型指示符 (*/=@|)")
+        print("  -L              跟随符号链接，显示目标文件信息")
         print("  -t              按修改时间排序（最新的在前）")
         print("  -S              按文件大小排序（最大的在前）")
         print("  -r              反向排序")
         print("  -R              递归列出子目录")
         print("  --group-directories-first  目录排在文件前面")
+        print("  --ignore=PATTERN   忽略匹配的文件 (支持 * 和 ? 通配符)")
         print("  --time-style=STYLE  时间显示格式: default, iso, long-iso, full-iso")
         print("  --color         强制启用颜色输出")
         print("  --no-color      禁用颜色输出")
-        print("  -e 文件 \"备注\"  设置 Finder 注释")
+        print("  -e 文件 \"备注\"  设置 Finder 注释 (支持通配符如 *.txt)")
         print("  --help          显示帮助信息")
         print("  --version       显示版本信息")
         print("")
@@ -339,6 +425,7 @@ struct llc {
         print("  human-readable = true|false")
         print("  show-hidden = true|false")
         print("  time-style = default|iso|long-iso|full-iso")
+        print("  ignore = PATTERN  (可多次使用)")
         print("")
         print("环境变量:")
         print("  NO_COLOR=1      禁用颜色输出")
@@ -364,11 +451,13 @@ struct llc {
         print("  llc -li                # 显示 inode 号")
         print("  llc -ld /tmp           # 列出目录本身")
         print("  llc -F                 # 显示类型指示符")
+        print("  llc -L                 # 跟随符号链接")
         print("  llc -R                 # 递归列出子目录")
-        print("  llc -e file.txt \"备注\" # 设置注释")
+        print("  llc -e file.txt \"备注\"   # 设置注释")
+print("  llc -e '*.txt' \"备注\"   # 批量设置 txt 文件注释")
     }
 
-    func listDirectory(path: String, showHidden: Bool, showAlmostAll: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, groupDirectoriesFirst: Bool = false, showInode: Bool, classify: Bool = false) {
+    func listDirectory(path: String, showHidden: Bool, showAlmostAll: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, groupDirectoriesFirst: Bool = false, showInode: Bool, classify: Bool = false, followSymlinks: Bool = false, ignorePatterns: [String] = []) {
         let fileManager = FileManager.default
         do {
             var contents = try fileManager.contentsOfDirectory(atPath: path)
@@ -387,6 +476,10 @@ struct llc {
 
             var fileInfos: [(name: String, path: String, attrs: [FileAttributeKey: Any], isDir: Bool)] = []
             for item in contents {
+                // 跳过 . 和 .. 的忽略检查
+                if item != "." && item != ".." && shouldIgnoreFile(item, patterns: ignorePatterns) {
+                    continue
+                }
                 let fullPath = (path as NSString).appendingPathComponent(item)
                 if let attrs = try? fileManager.attributesOfItem(atPath: fullPath) {
                     let fileType = attrs[.type] as? FileAttributeType ?? .typeRegular
@@ -433,7 +526,7 @@ struct llc {
             let comments = parallelGetComments(paths: fullPaths)
 
             for (index, info) in fileInfos.enumerated() {
-                listFile(path: info.path, attrs: info.attrs, comment: comments[index], humanReadable: humanReadable, showInode: showInode, classify: classify)
+                listFile(path: info.path, attrs: info.attrs, comment: comments[index], humanReadable: humanReadable, showInode: showInode, classify: classify, followSymlinks: followSymlinks)
             }
         } catch {
             print("llc: cannot open directory '\(path)': \(error.localizedDescription)")
@@ -501,7 +594,7 @@ struct llc {
         }
     }
 
-    func listFile(path: String, attrs: [FileAttributeKey: Any]? = nil, comment: String? = nil, humanReadable: Bool = false, showInode: Bool = false, classify: Bool = false) {
+    func listFile(path: String, attrs: [FileAttributeKey: Any]? = nil, comment: String? = nil, humanReadable: Bool = false, showInode: Bool = false, classify: Bool = false, followSymlinks: Bool = false) {
         let fileManager = FileManager.default
 
         let fileAttrs: [FileAttributeKey: Any]
@@ -514,18 +607,57 @@ struct llc {
             fileAttrs = attrs
         }
 
-        let fileType = fileAttrs[.type] as? FileAttributeType ?? .typeRegular
-        let permissions = fileAttrs[.posixPermissions] as? Int ?? 0
-        let owner = fileAttrs[.ownerAccountName] as? String ?? "unknown"
-        let group = fileAttrs[.groupOwnerAccountName] as? String ?? "unknown"
-        let size = fileAttrs[.size] as? Int64 ?? 0
-        let modDate = fileAttrs[.modificationDate] as? Date ?? Date()
+        // 检查是否为符号链接
+        let originalFileType = fileAttrs[.type] as? FileAttributeType ?? .typeRegular
+        let isSymlink = originalFileType == .typeSymbolicLink
 
-        // 使用 stat 获取 inode
+        // 如果启用 -L 且是符号链接，获取目标文件信息
+        var resolvedPath = path
+        var resolvedAttrs = fileAttrs
+        var isBrokenSymlink = false
+
+        if followSymlinks && isSymlink {
+            // 获取符号链接的目标路径
+            if let targetPath = try? fileManager.destinationOfSymbolicLink(atPath: path) {
+                // 如果是相对路径，转换为绝对路径
+                let absoluteTargetPath: String
+                if targetPath.hasPrefix("/") {
+                    absoluteTargetPath = targetPath
+                } else {
+                    let parentDir = (path as NSString).deletingLastPathComponent
+                    absoluteTargetPath = (parentDir as NSString).appendingPathComponent(targetPath)
+                }
+
+                // 检查目标是否存在
+                if let targetAttrs = try? fileManager.attributesOfItem(atPath: absoluteTargetPath) {
+                    resolvedAttrs = targetAttrs
+                    resolvedPath = absoluteTargetPath
+                } else {
+                    // 链接目标不存在
+                    isBrokenSymlink = true
+                }
+            } else {
+                isBrokenSymlink = true
+            }
+        }
+
+        let fileType = resolvedAttrs[.type] as? FileAttributeType ?? .typeRegular
+        let permissions = resolvedAttrs[.posixPermissions] as? Int ?? 0
+        let owner = resolvedAttrs[.ownerAccountName] as? String ?? "unknown"
+        let group = resolvedAttrs[.groupOwnerAccountName] as? String ?? "unknown"
+        let size = resolvedAttrs[.size] as? Int64 ?? 0
+        let modDate = resolvedAttrs[.modificationDate] as? Date ?? Date()
+
+        // 使用 stat 获取 inode (根据是否跟随链接选择使用 lstat 或 stat)
         var inode: UInt64 = 0
         if showInode {
             var statBuf = stat()
-            let result = stat(path, &statBuf)
+            let result: Int32
+            if followSymlinks {
+                result = stat(path, &statBuf)
+            } else {
+                result = lstat(path, &statBuf)
+            }
             if result == 0 {
                 inode = UInt64(statBuf.st_ino)
             }
@@ -541,20 +673,49 @@ struct llc {
         let sizeString = humanReadable ? formatSizeHumanReadable(size) : formatSize(size)
         let dateString = formatDate(modDate, style: timeStyle)
         let name = (path as NSString).lastPathComponent
+        // 对于符号链接，获取原始链接文件的注释（因为目标文件的注释可能不同）
         let fileComment = comment ?? getFinderComment(path: path)
 
-        // 获取类型指示符
-        let typeIndicator = classify ? getTypeIndicator(fileType: fileType, permissions: permissions, path: path) : ""
+        // 获取类型指示符（根据 -L 选项决定是否跟随链接）
+        let typeIndicator: String
+        if classify {
+            if followSymlinks && isSymlink {
+                // -L 模式下，显示目标文件的类型指示符
+                typeIndicator = getTypeIndicator(fileType: fileType, permissions: permissions, path: resolvedPath)
+            } else {
+                typeIndicator = getTypeIndicator(fileType: originalFileType, permissions: permissions, path: path)
+            }
+        } else {
+            typeIndicator = ""
+        }
 
         let nameColor: String
         let isExecutable = (permissions & 0o111) != 0
-        switch fileType {
-        case .typeDirectory:
-            nameColor = Colors.blue + Colors.bold
-        case .typeSymbolicLink:
-            nameColor = Colors.cyan
-        default:
-            nameColor = isExecutable ? Colors.green : Colors.reset
+
+        if followSymlinks && isSymlink {
+            // -L 模式下，根据目标文件类型显示颜色
+            if isBrokenSymlink {
+                nameColor = Colors.red // 断链显示红色
+            } else {
+                switch fileType {
+                case .typeDirectory:
+                    nameColor = Colors.blue + Colors.bold
+                case .typeSymbolicLink:
+                    nameColor = Colors.cyan
+                default:
+                    nameColor = isExecutable ? Colors.green : Colors.reset
+                }
+            }
+        } else {
+            // 默认模式，根据原始文件类型显示颜色
+            switch originalFileType {
+            case .typeDirectory:
+                nameColor = Colors.blue + Colors.bold
+            case .typeSymbolicLink:
+                nameColor = Colors.cyan
+            default:
+                nameColor = isExecutable ? Colors.green : Colors.reset
+            }
         }
 
         let commentColor = Colors.gray
@@ -563,26 +724,33 @@ struct llc {
             let coloredName = "\(nameColor)\(name)\(typeIndicator)\(Colors.reset)"
             let coloredComment = fileComment.isEmpty ? "" : "  \(commentColor)[\(fileComment)]\(Colors.reset)"
 
-            output += String(format: "%@ %2d %@ %@ %@ %@ %@%@",
+            // 如果是断链，在文件名后添加标记
+            let brokenLinkIndicator = (followSymlinks && isSymlink && isBrokenSymlink) ? " \(Colors.red)[broken link]\(Colors.reset)" : ""
+
+            output += String(format: "%@ %2d %@ %@ %@ %@ %@%@%@",
                 modeString,
-                fileAttrs[.referenceCount] as? Int ?? 1,
+                resolvedAttrs[.referenceCount] as? Int ?? 1,
                 owner.padding(toLength: 8, withPad: " ", startingAt: 0),
                 group.padding(toLength: 8, withPad: " ", startingAt: 0),
                 sizeString,
                 dateString,
                 coloredName,
+                brokenLinkIndicator,
                 coloredComment
             )
         } else {
-            output += String(format: "%@ %2d %@ %@ %@ %@ %@%@",
+            let brokenLinkIndicator = (followSymlinks && isSymlink && isBrokenSymlink) ? " [broken link]" : ""
+
+            output += String(format: "%@ %2d %@ %@ %@ %@ %@%@%@",
                 modeString,
-                fileAttrs[.referenceCount] as? Int ?? 1,
+                resolvedAttrs[.referenceCount] as? Int ?? 1,
                 owner.padding(toLength: 8, withPad: " ", startingAt: 0),
                 group.padding(toLength: 8, withPad: " ", startingAt: 0),
                 sizeString,
                 dateString,
                 name,
-                typeIndicator
+                typeIndicator,
+                brokenLinkIndicator
             )
 
             if !fileComment.isEmpty {
@@ -675,7 +843,7 @@ struct llc {
         return formatter.string(from: date)
     }
 
-    func listDirectoryRecursive(path: String, showHidden: Bool, showAlmostAll: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, showInode: Bool, classify: Bool, singleColumn: Bool = false, visitedPaths: Set<String> = [], depth: Int = 0) {
+    func listDirectoryRecursive(path: String, showHidden: Bool, showAlmostAll: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, showInode: Bool, classify: Bool, singleColumn: Bool = false, followSymlinks: Bool = false, ignorePatterns: [String] = [], visitedPaths: Set<String> = [], depth: Int = 0) {
         // 防止循环引用和过深层级
         let canonicalPath = (path as NSString).standardizingPath
         if visitedPaths.contains(canonicalPath) || depth > 10 {
@@ -692,9 +860,9 @@ struct llc {
 
         // 先列出当前目录内容
         if singleColumn {
-            listDirectorySingleColumn(path: path, showHidden: showHidden, showAlmostAll: showAlmostAll, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: false, classify: classify)
+            listDirectorySingleColumn(path: path, showHidden: showHidden, showAlmostAll: showAlmostAll, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: false, classify: classify, followSymlinks: followSymlinks, ignorePatterns: ignorePatterns)
         } else {
-            listDirectory(path: path, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify)
+            listDirectory(path: path, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: false, showInode: showInode, classify: classify, followSymlinks: followSymlinks, ignorePatterns: ignorePatterns)
         }
 
         // 获取子目录列表
@@ -705,12 +873,16 @@ struct llc {
                 if item.hasPrefix(".") && !showHidden && !showAlmostAll {
                     continue
                 }
+                // 检查是否匹配忽略模式
+                if shouldIgnoreFile(item, patterns: ignorePatterns) {
+                    continue
+                }
                 let fullPath = (path as NSString).appendingPathComponent(item)
                 var isDir: ObjCBool = false
                 if fileManager.fileExists(atPath: fullPath, isDirectory: &isDir) {
                     if isDir.boolValue {
                         // 递归处理子目录
-                        listDirectoryRecursive(path: fullPath, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify, singleColumn: singleColumn, visitedPaths: newVisitedPaths, depth: depth + 1)
+                        listDirectoryRecursive(path: fullPath, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify, singleColumn: singleColumn, followSymlinks: followSymlinks, ignorePatterns: ignorePatterns, visitedPaths: newVisitedPaths, depth: depth + 1)
                     }
                 }
             }
@@ -719,7 +891,7 @@ struct llc {
         }
     }
 
-    func getFileNameWithColor(path: String, classify: Bool = false) -> String {
+    func getFileNameWithColor(path: String, classify: Bool = false, followSymlinks: Bool = false) -> String {
         let fileManager = FileManager.default
         let name = (path as NSString).lastPathComponent
 
@@ -727,31 +899,74 @@ struct llc {
             return name
         }
 
-        let fileType = attrs[.type] as? FileAttributeType ?? .typeRegular
+        let originalFileType = attrs[.type] as? FileAttributeType ?? .typeRegular
         let permissions = attrs[.posixPermissions] as? Int ?? 0
         let isExecutable = (permissions & 0o111) != 0
+        let isSymlink = originalFileType == .typeSymbolicLink
+
+        // 如果启用 -L 且是符号链接，获取目标文件信息
+        var resolvedFileType = originalFileType
+        var resolvedPath = path
+
+        if followSymlinks && isSymlink {
+            if let targetPath = try? fileManager.destinationOfSymbolicLink(atPath: path) {
+                let absoluteTargetPath: String
+                if targetPath.hasPrefix("/") {
+                    absoluteTargetPath = targetPath
+                } else {
+                    let parentDir = (path as NSString).deletingLastPathComponent
+                    absoluteTargetPath = (parentDir as NSString).appendingPathComponent(targetPath)
+                }
+
+                if let targetAttrs = try? fileManager.attributesOfItem(atPath: absoluteTargetPath) {
+                    resolvedFileType = targetAttrs[.type] as? FileAttributeType ?? .typeRegular
+                    resolvedPath = absoluteTargetPath
+                }
+            }
+        }
 
         // 获取类型指示符
-        let typeIndicator = classify ? getTypeIndicator(fileType: fileType, permissions: permissions, path: path) : ""
+        let typeIndicator: String
+        if classify {
+            if followSymlinks && isSymlink {
+                typeIndicator = getTypeIndicator(fileType: resolvedFileType, permissions: permissions, path: resolvedPath)
+            } else {
+                typeIndicator = getTypeIndicator(fileType: originalFileType, permissions: permissions, path: path)
+            }
+        } else {
+            typeIndicator = ""
+        }
 
         if !useColor {
             return name + typeIndicator
         }
 
         let nameColor: String
-        switch fileType {
-        case .typeDirectory:
-            nameColor = Colors.blue + Colors.bold
-        case .typeSymbolicLink:
-            nameColor = Colors.cyan
-        default:
-            nameColor = isExecutable ? Colors.green : Colors.reset
+        if followSymlinks && isSymlink {
+            switch resolvedFileType {
+            case .typeDirectory:
+                nameColor = Colors.blue + Colors.bold
+            case .typeSymbolicLink:
+                nameColor = Colors.cyan
+            default:
+                let targetIsExecutable = (permissions & 0o111) != 0
+                nameColor = targetIsExecutable ? Colors.green : Colors.reset
+            }
+        } else {
+            switch originalFileType {
+            case .typeDirectory:
+                nameColor = Colors.blue + Colors.bold
+            case .typeSymbolicLink:
+                nameColor = Colors.cyan
+            default:
+                nameColor = isExecutable ? Colors.green : Colors.reset
+            }
         }
 
         return "\(nameColor)\(name)\(typeIndicator)\(Colors.reset)"
     }
 
-    func listDirectorySingleColumn(path: String, showHidden: Bool, showAlmostAll: Bool, sortBy: SortBy, reverseSort: Bool, groupDirectoriesFirst: Bool = false, classify: Bool = false) {
+    func listDirectorySingleColumn(path: String, showHidden: Bool, showAlmostAll: Bool, sortBy: SortBy, reverseSort: Bool, groupDirectoriesFirst: Bool = false, classify: Bool = false, followSymlinks: Bool = false, ignorePatterns: [String] = []) {
         let fileManager = FileManager.default
         do {
             var contents = try fileManager.contentsOfDirectory(atPath: path)
@@ -770,6 +985,10 @@ struct llc {
 
             var fileInfos: [(name: String, path: String, attrs: [FileAttributeKey: Any], isDir: Bool)] = []
             for item in contents {
+                // 跳过 . 和 .. 的忽略检查
+                if item != "." && item != ".." && shouldIgnoreFile(item, patterns: ignorePatterns) {
+                    continue
+                }
                 let fullPath = (path as NSString).appendingPathComponent(item)
                 if let attrs = try? fileManager.attributesOfItem(atPath: fullPath) {
                     let fileType = attrs[.type] as? FileAttributeType ?? .typeRegular
@@ -811,7 +1030,7 @@ struct llc {
             }
 
             for info in fileInfos {
-                print(getFileNameWithColor(path: info.path, classify: classify))
+                print(getFileNameWithColor(path: info.path, classify: classify, followSymlinks: followSymlinks))
             }
         } catch {
             print("llc: cannot open directory '\(path)': \(error.localizedDescription)")
