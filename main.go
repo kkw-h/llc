@@ -19,8 +19,27 @@ import (
 
 const version = "1.6.0"
 
-// xattr attribute name
-const xattrCommentName = "user.llc.comment"
+// Application constants
+const (
+	// Concurrency limits
+	maxConcurrency = 20
+
+	// Recursion limits
+	maxRecursionDepth = 10
+
+	// xattr attribute name
+	xattrCommentName = "user.llc.comment"
+
+	// Config file name
+	configFileName = ".llcrc"
+
+	// Date/time format strings
+	dateFormatDefault     = "Jan 02 15:04"
+	dateFormatDefaultYear = "Jan 02  2006"
+	dateFormatISO         = "2006-01-02"
+	dateFormatLongISO     = "2006-01-02 15:04"
+	dateFormatFullISO     = "2006-01-02 15:04:05 -0700"
+)
 
 // ANSI color codes
 const (
@@ -33,6 +52,40 @@ const (
 	cyan   = "\033[36m"
 	gray   = "\033[90m"
 )
+
+// regexCache caches compiled regex patterns for performance
+type regexCache struct {
+	cache map[string]*regexp.Regexp
+	mu    sync.RWMutex
+}
+
+var patternCache = &regexCache{
+	cache: make(map[string]*regexp.Regexp),
+}
+
+func (rc *regexCache) get(pattern string) *regexp.Regexp {
+	rc.mu.RLock()
+	re, ok := rc.cache[pattern]
+	rc.mu.RUnlock()
+
+	if ok {
+		return re
+	}
+
+	// Compile pattern
+	regexPattern := "^" + strings.ReplaceAll(strings.ReplaceAll(regexp.QuoteMeta(pattern), `\*`, ".*"), `\?`, ".") + "$"
+	re, err := regexp.Compile(regexPattern)
+	if err != nil {
+		return nil
+	}
+
+	// Store in cache
+	rc.mu.Lock()
+	rc.cache[pattern] = re
+	rc.mu.Unlock()
+
+	return re
+}
 
 // Config holds configuration
 type Config struct {
@@ -240,7 +293,7 @@ func loadConfig() Config {
 		return config
 	}
 
-	configPath := filepath.Join(home, ".llcrc")
+	configPath := filepath.Join(home, configFileName)
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return config
@@ -313,7 +366,7 @@ func printHelp() {
 	fmt.Println("  --help          显示帮助信息")
 	fmt.Println("  --version       显示版本信息")
 	fmt.Println("")
-	fmt.Println("配置文件 (~/.llcrc):")
+	fmt.Printf("配置文件 (~/%s):\n", configFileName)
 	fmt.Println("  color = always|auto|never")
 	fmt.Println("  sort = name|time|size")
 	fmt.Println("  group-directories-first = true|false")
@@ -334,10 +387,8 @@ func printHelp() {
 }
 
 func matchesPattern(name, pattern string) bool {
-	// Simple glob matching for * and ?
-	regexPattern := "^" + strings.ReplaceAll(strings.ReplaceAll(regexp.QuoteMeta(pattern), `\*`, ".*"), `\?`, ".") + "$"
-	re, err := regexp.Compile(regexPattern)
-	if err != nil {
+	re := patternCache.get(pattern)
+	if re == nil {
 		return false
 	}
 	return re.MatchString(name)
@@ -504,7 +555,7 @@ func fetchCommentsParallel(files []FileInfo) []string {
 	var mu sync.Mutex
 
 	// Limit concurrency
-	semaphore := make(chan struct{}, 20)
+	semaphore := make(chan struct{}, maxConcurrency)
 
 	for i, file := range files {
 		wg.Add(1)
@@ -660,17 +711,17 @@ func formatSize(size int64, human bool) string {
 func formatTime(t time.Time, style string) string {
 	switch style {
 	case "iso":
-		return t.Format("2006-01-02")
+		return t.Format(dateFormatISO)
 	case "long-iso":
-		return t.Format("2006-01-02 15:04")
+		return t.Format(dateFormatLongISO)
 	case "full-iso":
-		return t.Format("2006-01-02 15:04:05 -0700")
+		return t.Format(dateFormatFullISO)
 	default:
 		// Default: similar to ls
 		if t.Year() == time.Now().Year() {
-			return t.Format("Jan 02 15:04")
+			return t.Format(dateFormatDefault)
 		}
-		return t.Format("Jan 02  2006")
+		return t.Format(dateFormatDefaultYear)
 	}
 }
 
@@ -835,7 +886,7 @@ func listSingleColumn(dirPath string, showAll, showAlmostAll bool, sortBy string
 func listRecursive(dirPath string, showAll, showAlmostAll, humanReadable bool, sortBy string, reverseSort bool, showInode, classify, useColor bool, timeStyle string, ignorePatterns []string, groupDirsFirst, singleColumn, followSymlinks bool, depth int, visited map[string]bool) {
 	// Prevent cycles
 	absPath, _ := filepath.Abs(dirPath)
-	if visited[absPath] || depth > 10 {
+	if visited[absPath] || depth > maxRecursionDepth {
 		return
 	}
 	visited[absPath] = true
