@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Swift
+        uses: swift-actions/setup-swift@v1
+        with:
+          swift-version: '5.9'
+
+      - name: Build release binary
+        run: |
+          swift build -c release
+          # 验证构建产物
+          file .build/release/llc
+
+      - name: Package binary
+        run: |
+          # 创建发布目录
+          mkdir -p llc-macos
+          cp .build/release/llc llc-macos/
+          cp README.md llc-macos/
+          cp CLAUDE.md llc-macos/
+          # 打包
+          tar -czf llc-macos.tar.gz llc-macos/
+          # 生成校验和
+          shasum -a 256 llc-macos.tar.gz > llc-macos.tar.gz.sha256
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            llc-macos.tar.gz
+            llc-macos.tar.gz.sha256
+          body: |
+            ## llc - macOS 增强版 ls 命令
+
+            ### 安装
+
+            ```bash
+            # 下载并解压
+tar -xzf llc-macos.tar.gz
+            sudo cp llc-macos/llc /usr/local/bin/
+            ```
+
+            ### 使用方法
+
+            ```bash
+            llc              # 列出当前目录
+            llc -a           # 列出所有文件（含隐藏文件）
+            llc -e file.txt "备注"  # 设置 Finder 注释
+            ```
+
+            ### 系统要求
+
+            - macOS 10.14+
+
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
