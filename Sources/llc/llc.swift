@@ -7,22 +7,48 @@ struct llc {
         let arguments = CommandLine.arguments
 
         var showHidden = false
+        var editComment: String? = nil
         var path: String? = nil
 
-        for arg in arguments.dropFirst() {
+        var i = 1
+        while i < arguments.count {
+            let arg = arguments[i]
             if arg == "-a" {
                 showHidden = true
+            } else if arg == "-e" {
+                // -e 文件夹 "备注信息"
+                i += 1
+                if i < arguments.count {
+                    path = arguments[i]
+                    i += 1
+                    if i < arguments.count {
+                        editComment = arguments[i]
+                    } else {
+                        print("llc: -e 需要指定备注内容")
+                        exit(1)
+                    }
+                } else {
+                    print("llc: -e 需要指定文件夹路径")
+                    exit(1)
+                }
             } else if arg == "-h" || arg == "--help" {
                 printHelp()
                 exit(0)
             } else if !arg.hasPrefix("-") {
                 path = arg
             }
+            i += 1
         }
 
         let targetPath = path ?? "."
         let fileManager = FileManager.default
         let expandedPath = (targetPath as NSString).expandingTildeInPath
+
+        // 如果是编辑模式
+        if let comment = editComment {
+            setFinderComment(path: expandedPath, comment: comment)
+            exit(0)
+        }
 
         var isDirectory: ObjCBool = false
         guard fileManager.fileExists(atPath: expandedPath, isDirectory: &isDirectory) else {
@@ -42,7 +68,13 @@ struct llc {
         print("")
         print("选项:")
         print("  -a          显示所有文件，包括隐藏文件")
+        print("  -e 文件夹 \"备注\"  设置 Finder 注释")
         print("  -h, --help  显示帮助信息")
+        print("")
+        print("示例:")
+        print("  llc                    # 列出当前目录")
+        print("  llc -a                 # 列出所有文件")
+        print("  llc -e file.txt \"重要文档\"  # 设置文件注释")
         print("")
         print("llc 是 ls -l 的增强版本，显示文件列表并在最后显示 Finder 注释")
     }
@@ -189,5 +221,51 @@ struct llc {
         }
 
         return comment as? String ?? ""
+    }
+
+    static func setFinderComment(path: String, comment: String) {
+        let fileManager = FileManager.default
+
+        guard fileManager.fileExists(atPath: path) else {
+            print("llc: 文件不存在 '\(path)'")
+            exit(1)
+        }
+
+        // 使用 AppleScript 设置 Finder 注释
+        let absolutePath = (path as NSString).standardizingPath
+        let escapedPath = absolutePath.replacingOccurrences(of: "\"", with: "\\\"")
+        let escapedComment = comment.replacingOccurrences(of: "\"", with: "\\\"")
+
+        let appleScript = """
+        tell application "Finder"
+            set theFile to POSIX file "\(escapedPath)" as alias
+            set comment of theFile to "\(escapedComment)"
+        end tell
+        """
+
+        let process = Process()
+        process.launchPath = "/usr/bin/osascript"
+        process.arguments = ["-e", appleScript]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            print("llc: 设置注释失败: \(error.localizedDescription)")
+            exit(1)
+        }
+
+        if process.terminationStatus == 0 {
+            print("已设置注释: [\(comment)] -> \(absolutePath)")
+        } else {
+            let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
+            let errorMsg = String(data: errorData, encoding: .utf8) ?? "未知错误"
+            print("llc: 设置注释失败: \(errorMsg)")
+            exit(1)
+        }
     }
 }
