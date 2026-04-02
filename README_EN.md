@@ -23,9 +23,17 @@ An enhanced `ls -l` command-line tool for macOS and Linux. Displays file **comme
 
 ## Installation
 
-### Quick Install (Recommended)
+### Using Homebrew (Recommended for macOS/Linux)
 
-One-command installation using the install script:
+```bash
+# Add the tap
+brew tap kkw-h/llc
+
+# Install llc
+brew install llc
+```
+
+### Quick Install Script
 
 ```bash
 # Using curl

@@ -23,9 +23,17 @@
 
 ## 安装
 
-### 快速安装（推荐）
+### 使用 Homebrew（推荐 macOS/Linux）
 
-使用一键安装脚本自动下载并安装最新版本：
+```bash
+# 添加 tap
+brew tap kkw-h/llc
+
+# 安装 llc
+brew install llc
+```
+
+### 一键安装脚本
 
 ```bash
 # 使用 curl
