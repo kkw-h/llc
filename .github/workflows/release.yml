@@ -65,13 +65,23 @@ jobs:
         with:
           files: artifacts/llc-*
           body: |
-            ## llc v2.0.0 - Go Rewrite with Linux Support
+            ## llc ${{ github.ref_name }}
 
             ### Installation
 
             ```bash
             # Linux AMD64
             curl -L -o llc https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/llc-linux-amd64
+            chmod +x llc
+            sudo mv llc /usr/local/bin/
+
+            # Linux ARM64
+            curl -L -o llc https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/llc-linux-arm64
+            chmod +x llc
+            sudo mv llc /usr/local/bin/
+
+            # macOS Intel
+            curl -L -o llc https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/llc-darwin-amd64
             chmod +x llc
             sudo mv llc /usr/local/bin/
 
@@ -100,5 +110,6 @@ jobs:
 
           draft: false
           prerelease: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
