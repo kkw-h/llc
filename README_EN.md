@@ -1,5 +1,7 @@
 # llc
 
+English | [中文](README.md)
+
 An enhanced `ls -l` command-line tool for macOS and Linux. Displays file **comments** at the end of each line (Spotlight/Finder comments on macOS, xattr extended attributes on Linux).
 
 ## Features

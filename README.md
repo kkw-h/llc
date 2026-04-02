@@ -1,5 +1,7 @@
 # llc
 
+[English](README_EN.md) | 中文
+
 一个增强版 `ls -l` 命令行工具，支持 macOS 和 Linux。在保留 `ls -l` 标准输出的基础上，额外显示文件的**注释**（macOS 使用 Spotlight/Finder 注释，Linux 使用 xattr 扩展属性）。
 
 ## 功能特性
