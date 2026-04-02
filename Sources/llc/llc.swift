@@ -1,6 +1,9 @@
 import Foundation
 import CoreServices
 
+// 版本信息
+let VERSION = "1.1.0"
+
 // ANSI 颜色代码
 struct Colors {
     static let reset = "\u{001B}[0m"
@@ -16,6 +19,13 @@ struct Colors {
     static let gray = "\u{001B}[90m"
 }
 
+// 排序方式
+enum SortBy {
+    case name
+    case time
+    case size
+}
+
 @main
 @MainActor
 struct llc {
@@ -23,17 +33,20 @@ struct llc {
 
     static var useColor: Bool {
         if forceColor { return true }
-        // 检查是否在终端中且支持颜色
         if let term = getenv("TERM") {
             let termStr = String(cString: term)
             return termStr != "dumb" && isatty(fileno(stdout)) != 0
         }
         return false
     }
+
     static func main() {
         let arguments = CommandLine.arguments
 
         var showHidden = false
+        var humanReadable = false
+        var sortBy: SortBy = .name
+        var reverseSort = false
         var editComment: String? = nil
         var path: String? = nil
 
@@ -42,10 +55,20 @@ struct llc {
             let arg = arguments[i]
             if arg == "-a" {
                 showHidden = true
+            } else if arg == "-h" || arg == "--human-readable" {
+                humanReadable = true
+            } else if arg == "-t" {
+                sortBy = .time
+            } else if arg == "-S" {
+                sortBy = .size
+            } else if arg == "-r" {
+                reverseSort = true
             } else if arg == "--color" {
                 forceColor = true
+            } else if arg == "--version" {
+                printVersion()
+                exit(0)
             } else if arg == "-e" {
-                // -e 文件夹 "备注信息"
                 i += 1
                 if i < arguments.count {
                     path = arguments[i]
@@ -60,7 +83,7 @@ struct llc {
                     print("llc: -e 需要指定文件夹路径")
                     exit(1)
                 }
-            } else if arg == "-h" || arg == "--help" {
+            } else if arg == "--help" {
                 printHelp()
                 exit(0)
             } else if !arg.hasPrefix("-") {
@@ -73,7 +96,6 @@ struct llc {
         let fileManager = FileManager.default
         let expandedPath = (targetPath as NSString).expandingTildeInPath
 
-        // 如果是编辑模式
         if let comment = editComment {
             setFinderComment(path: expandedPath, comment: comment)
             exit(0)
@@ -86,20 +108,30 @@ struct llc {
         }
 
         if isDirectory.boolValue {
-            listDirectory(path: expandedPath, showHidden: showHidden)
+            listDirectory(path: expandedPath, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort)
         } else {
-            listFile(path: expandedPath)
+            listFile(path: expandedPath, humanReadable: humanReadable)
         }
+    }
+
+    static func printVersion() {
+        print("llc version \(VERSION)")
+        print("macOS enhanced ls command with Finder comments")
     }
 
     static func printHelp() {
         print("用法: llc [选项] [路径]")
         print("")
         print("选项:")
-        print("  -a          显示所有文件，包括隐藏文件")
-        print("  --color     强制启用颜色输出")
-        print("  -e 文件夹 \"备注\"  设置 Finder 注释")
-        print("  -h, --help  显示帮助信息")
+        print("  -a              显示所有文件，包括隐藏文件")
+        print("  -h, --human-readable  以人类可读格式显示文件大小 (KB, MB, GB)")
+        print("  -t              按修改时间排序（最新的在前）")
+        print("  -S              按文件大小排序（最大的在前）")
+        print("  -r              反向排序")
+        print("  --color         强制启用颜色输出")
+        print("  -e 文件 \"备注\"  设置 Finder 注释")
+        print("  --help          显示帮助信息")
+        print("  --version       显示版本信息")
         print("")
         print("颜色说明:")
         print("  蓝色粗体 = 目录")
@@ -110,13 +142,14 @@ struct llc {
         print("示例:")
         print("  llc                    # 列出当前目录")
         print("  llc -a                 # 列出所有文件")
-        print("  llc --color            # 强制启用颜色")
-        print("  llc -e file.txt \"重要文档\"  # 设置文件注释")
-        print("")
-        print("llc 是 ls -l 的增强版本，显示文件列表并在最后显示 Finder 注释")
+        print("  llc -lh                # 人类可读大小")
+        print("  llc -lt                # 按时间排序")
+        print("  llc -lS                # 按大小排序")
+        print("  llc -ltr               # 按时间反向排序")
+        print("  llc -e file.txt \"备注\" # 设置注释")
     }
 
-    static func listDirectory(path: String, showHidden: Bool = false) {
+    static func listDirectory(path: String, showHidden: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool) {
         let fileManager = FileManager.default
         do {
             var contents = try fileManager.contentsOfDirectory(atPath: path)
@@ -128,16 +161,40 @@ struct llc {
                 contents.insert("..", at: 1)
             }
 
-            let sortedContents = contents.sorted()
-            let fullPaths = sortedContents.map { (path as NSString).appendingPathComponent($0) }
+            // 获取文件信息用于排序
+            var fileInfos: [(name: String, path: String, attrs: [FileAttributeKey: Any])] = []
+            for item in contents {
+                let fullPath = (path as NSString).appendingPathComponent(item)
+                if let attrs = try? fileManager.attributesOfItem(atPath: fullPath) {
+                    fileInfos.append((name: item, path: fullPath, attrs: attrs))
+                }
+            }
 
-            // 并行获取所有文件的 Finder 注释
+            // 排序
+            fileInfos.sort {
+                switch sortBy {
+                case .name:
+                    return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+                case .time:
+                    let time0 = $0.attrs[.modificationDate] as? Date ?? Date.distantPast
+                    let time1 = $1.attrs[.modificationDate] as? Date ?? Date.distantPast
+                    return time0 > time1
+                case .size:
+                    let size0 = $0.attrs[.size] as? Int64 ?? 0
+                    let size1 = $1.attrs[.size] as? Int64 ?? 0
+                    return size0 > size1
+                }
+            }
+
+            if reverseSort {
+                fileInfos.reverse()
+            }
+
+            let fullPaths = fileInfos.map { $0.path }
             let comments = parallelGetComments(paths: fullPaths)
 
-            for (index, _) in sortedContents.enumerated() {
-                let fullPath = fullPaths[index]
-                let comment = comments[index]
-                listFile(path: fullPath, comment: comment)
+            for (index, info) in fileInfos.enumerated() {
+                listFile(path: info.path, attrs: info.attrs, comment: comments[index], humanReadable: humanReadable)
             }
         } catch {
             print("llc: cannot open directory '\(path)': \(error.localizedDescription)")
@@ -165,27 +222,32 @@ struct llc {
         return results
     }
 
-    static func listFile(path: String, comment: String? = nil) {
+    static func listFile(path: String, attrs: [FileAttributeKey: Any]? = nil, comment: String? = nil, humanReadable: Bool = false) {
         let fileManager = FileManager.default
 
-        guard let attrs = try? fileManager.attributesOfItem(atPath: path) else {
-            return
+        let fileAttrs: [FileAttributeKey: Any]
+        if let attrs = attrs {
+            fileAttrs = attrs
+        } else {
+            guard let attrs = try? fileManager.attributesOfItem(atPath: path) else {
+                return
+            }
+            fileAttrs = attrs
         }
 
-        let fileType = attrs[.type] as? FileAttributeType ?? .typeRegular
-        let permissions = attrs[.posixPermissions] as? Int ?? 0
-        let owner = attrs[.ownerAccountName] as? String ?? "unknown"
-        let group = attrs[.groupOwnerAccountName] as? String ?? "unknown"
-        let size = attrs[.size] as? Int64 ?? 0
-        let modDate = attrs[.modificationDate] as? Date ?? Date()
+        let fileType = fileAttrs[.type] as? FileAttributeType ?? .typeRegular
+        let permissions = fileAttrs[.posixPermissions] as? Int ?? 0
+        let owner = fileAttrs[.ownerAccountName] as? String ?? "unknown"
+        let group = fileAttrs[.groupOwnerAccountName] as? String ?? "unknown"
+        let size = fileAttrs[.size] as? Int64 ?? 0
+        let modDate = fileAttrs[.modificationDate] as? Date ?? Date()
 
         let modeString = modeToString(type: fileType, mode: permissions) + " "
-        let sizeString = formatSize(size)
+        let sizeString = humanReadable ? formatSizeHumanReadable(size) : formatSize(size)
         let dateString = formatDate(modDate)
         let name = (path as NSString).lastPathComponent
         let fileComment = comment ?? getFinderComment(path: path)
 
-        // 根据文件类型选择颜色
         let nameColor: String
         let isExecutable = (permissions & 0o111) != 0
         switch fileType {
@@ -194,11 +256,7 @@ struct llc {
         case .typeSymbolicLink:
             nameColor = Colors.cyan
         default:
-            if isExecutable {
-                nameColor = Colors.green
-            } else {
-                nameColor = Colors.reset
-            }
+            nameColor = isExecutable ? Colors.green : Colors.reset
         }
 
         let commentColor = Colors.gray
@@ -209,7 +267,7 @@ struct llc {
 
             let output = String(format: "%@ %2d %@ %@ %@ %@ %@%@",
                 modeString,
-                attrs[.referenceCount] as? Int ?? 1,
+                fileAttrs[.referenceCount] as? Int ?? 1,
                 owner.padding(toLength: 8, withPad: " ", startingAt: 0),
                 group.padding(toLength: 8, withPad: " ", startingAt: 0),
                 sizeString,
@@ -221,7 +279,7 @@ struct llc {
         } else {
             var output = String(format: "%@ %2d %@ %@ %@ %@ %@",
                 modeString,
-                attrs[.referenceCount] as? Int ?? 1,
+                fileAttrs[.referenceCount] as? Int ?? 1,
                 owner.padding(toLength: 8, withPad: " ", startingAt: 0),
                 group.padding(toLength: 8, withPad: " ", startingAt: 0),
                 sizeString,
@@ -267,6 +325,23 @@ struct llc {
         return String(format: "%8lld", size)
     }
 
+    static func formatSizeHumanReadable(_ size: Int64) -> String {
+        let units = ["B", "K", "M", "G", "T", "P"]
+        var value = Double(size)
+        var unitIndex = 0
+
+        while value >= 1024 && unitIndex < units.count - 1 {
+            value /= 1024
+            unitIndex += 1
+        }
+
+        if unitIndex == 0 {
+            return String(format: "%8lldB", size)
+        } else {
+            return String(format: "%7.1f%@", value, units[unitIndex])
+        }
+    }
+
     static func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         let calendar = Calendar.current
@@ -302,7 +377,6 @@ struct llc {
             exit(1)
         }
 
-        // 使用 AppleScript 设置 Finder 注释
         let absolutePath = (path as NSString).standardizingPath
         let escapedPath = absolutePath.replacingOccurrences(of: "\"", with: "\\\"")
         let escapedComment = comment.replacingOccurrences(of: "\"", with: "\\\"")
