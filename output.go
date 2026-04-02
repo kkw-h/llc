@@ -309,16 +309,9 @@ func collectFiles(entries []os.DirEntry, dirPath string, showAll, showAlmostAll 
 
 	for _, entry := range entries {
 		name := entry.Name()
+		isDir := entry.IsDir()
 
-		if showAlmostAll {
-			if name == "." || name == ".." {
-				continue
-			}
-		} else if !showAll && strings.HasPrefix(name, ".") {
-			continue
-		}
-
-		if shouldIgnore(name, ignorePatterns) {
+		if !shouldIncludeEntry(name, isDir, showAll, showAlmostAll, ignorePatterns, false) {
 			continue
 		}
 
@@ -332,7 +325,7 @@ func collectFiles(entries []os.DirEntry, dirPath string, showAll, showAlmostAll 
 			Name:  name,
 			Path:  fullPath,
 			Info:  info,
-			IsDir: info.IsDir(),
+			IsDir: isDir,
 		})
 	}
 
@@ -379,35 +372,66 @@ func listRecursive(dirPath string, showAll, showAlmostAll, humanReadable bool, s
 		return
 	}
 
-	subdirs := getSubdirs(entries, dirPath, showAll, showAlmostAll, ignorePatterns)
+	subdirs := getSubdirs(entries, dirPath, showAll, showAlmostAll, ignorePatterns, sortBy, reverseSort)
 
 	for _, subdir := range subdirs {
 		listRecursive(subdir, showAll, showAlmostAll, humanReadable, sortBy, reverseSort, showInode, classify, useColor, timeStyle, ignorePatterns, groupDirsFirst, singleColumn, followSymlinks, depth+1, visited)
 	}
 }
 
-// getSubdirs returns a sorted list of subdirectories
-func getSubdirs(entries []os.DirEntry, dirPath string, showAll, showAlmostAll bool, ignorePatterns []string) []string {
-	var subdirs []string
+// shouldIncludeEntry checks if a file entry should be included based on filters
+func shouldIncludeEntry(name string, isDir bool, showAll, showAlmostAll bool, ignorePatterns []string, wantDirs bool) bool {
+	// Handle special entries
+	if name == "." || name == ".." {
+		return false
+	}
+
+	// Handle hidden files
+	if showAlmostAll {
+		// Include hidden files except . and ..
+	} else if !showAll && strings.HasPrefix(name, ".") {
+		return false
+	}
+
+	// Check ignore patterns
+	if shouldIgnore(name, ignorePatterns) {
+		return false
+	}
+
+	return true
+}
+
+// getSubdirs returns a list of subdirectories (sorted according to sortBy and reverse)
+func getSubdirs(entries []os.DirEntry, dirPath string, showAll, showAlmostAll bool, ignorePatterns []string, sortBy string, reverse bool) []string {
+	var subdirs []FileInfo
+
 	for _, entry := range entries {
 		name := entry.Name()
 
-		if showAlmostAll {
-			if name == "." || name == ".." {
-				continue
-			}
-		} else if !showAll && strings.HasPrefix(name, ".") {
-			continue
-		}
-
-		if shouldIgnore(name, ignorePatterns) {
+		if !shouldIncludeEntry(name, entry.IsDir(), showAll, showAlmostAll, ignorePatterns, true) {
 			continue
 		}
 
 		if entry.IsDir() {
-			subdirs = append(subdirs, filepath.Join(dirPath, name))
+			fullPath := filepath.Join(dirPath, name)
+			info, _ := entry.Info()
+			subdirs = append(subdirs, FileInfo{
+				Name:  name,
+				Path:  fullPath,
+				Info:  info,
+				IsDir: true,
+			})
 		}
 	}
 
-	return subdirs
+	// Sort subdirs consistently with file listing
+	sortFiles(subdirs, sortBy, reverse, false)
+
+	// Extract just the paths
+	result := make([]string, len(subdirs))
+	for i, d := range subdirs {
+		result[i] = d.Path
+	}
+
+	return result
 }
