@@ -21,17 +21,51 @@
 
 ## 安装
 
+### 快速安装（推荐）
+
+使用一键安装脚本自动下载并安装最新版本：
+
+```bash
+# 使用 curl
+curl -fsSL https://raw.githubusercontent.com/kkw-h/llc/main/install.sh | bash
+
+# 或使用 wget
+wget -qO- https://raw.githubusercontent.com/kkw-h/llc/main/install.sh | bash
+```
+
+脚本会自动检测您的操作系统和架构，下载对应的二进制文件并安装到 `/usr/local/bin/`。
+
 ### 从 Release 下载
 
 从 [Releases](https://github.com/kkw-h/llc/releases) 页面下载对应平台的二进制文件：
 
 ```bash
-# Linux/macOS
+# Linux AMD64
+curl -L -o llc https://github.com/kkw-h/llc/releases/latest/download/llc-linux-amd64
+
+# Linux ARM64
+curl -L -o llc https://github.com/kkw-h/llc/releases/latest/download/llc-linux-arm64
+
+# macOS Intel
+curl -L -o llc https://github.com/kkw-h/llc/releases/latest/download/llc-darwin-amd64
+
+# macOS Apple Silicon
+curl -L -o llc https://github.com/kkw-h/llc/releases/latest/download/llc-darwin-arm64
+
+# 安装
 chmod +x llc
-sudo cp llc /usr/local/bin/
+sudo mv llc /usr/local/bin/
 ```
 
-### 从源码构建
+### 验证安装
+
+```bash
+# 检查版本
+llc --version
+
+# 测试基本功能
+llc -h
+```
 
 #### 前提条件
 
@@ -357,6 +391,16 @@ GOOS=windows GOARCH=amd64 go build -o llc-windows-amd64.exe
 ### v1.5.0 及更早
 
 - Swift 版本，仅支持 macOS
+
+## 卸载
+
+```bash
+# 删除二进制文件
+sudo rm /usr/local/bin/llc
+
+# 删除配置文件（可选）
+rm ~/.llcrc
+```
 
 ## 许可
 
