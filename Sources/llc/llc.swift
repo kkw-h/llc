@@ -65,6 +65,8 @@ struct llc {
         var showInode = false
         var listDirectoryItself = false
         var humanReadable = false
+        var classify = false
+        var recursive = false
         var sortBy: SortBy = .name
         var reverseSort = false
         var editComment: String? = nil
@@ -82,9 +84,11 @@ struct llc {
                     case "i": showInode = true
                     case "d": listDirectoryItself = true
                     case "h": humanReadable = true
+                    case "F": classify = true
                     case "t": sortBy = .time
                     case "S": sortBy = .size
                     case "r": reverseSort = true
+                    case "R": recursive = true
                     case "l": break // -l 是默认行为，不需要处理
                     default:
                         print("llc: 无效选项 -- '\(flag)'")
@@ -138,13 +142,15 @@ struct llc {
         }
 
         if isDirectory.boolValue {
-            if listDirectoryItself {
-                listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode)
+            if recursive {
+                listDirectoryRecursive(path: expandedPath, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify)
+            } else if listDirectoryItself {
+                listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode, classify: classify)
             } else {
-                listDirectory(path: expandedPath, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode)
+                listDirectory(path: expandedPath, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify)
             }
         } else {
-            listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode)
+            listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode, classify: classify)
         }
     }
 
@@ -161,9 +167,11 @@ struct llc {
         print("  -i              显示文件的 inode 号")
         print("  -d              列出目录本身，而非其内容")
         print("  -h, --human-readable  以人类可读格式显示文件大小 (KB, MB, GB)")
+        print("  -F              在文件名后添加类型指示符 (*/=@|)")
         print("  -t              按修改时间排序（最新的在前）")
         print("  -S              按文件大小排序（最大的在前）")
         print("  -r              反向排序")
+        print("  -R              递归列出子目录")
         print("  --color         强制启用颜色输出")
         print("  -e 文件 \"备注\"  设置 Finder 注释")
         print("  --help          显示帮助信息")
@@ -178,6 +186,13 @@ struct llc {
         print("  青色     = 符号链接")
         print("  灰色     = 注释")
         print("")
+        print("类型指示符 (使用 -F):")
+        print("  /  = 目录")
+        print("  *  = 可执行文件")
+        print("  @  = 符号链接")
+        print("  =  = 套接字")
+        print("  |  = FIFO")
+        print("")
         print("示例:")
         print("  llc                    # 列出当前目录")
         print("  llc -a                 # 列出所有文件")
@@ -185,10 +200,12 @@ struct llc {
         print("  llc -lt                # 按时间排序")
         print("  llc -li                # 显示 inode 号")
         print("  llc -ld /tmp           # 列出目录本身")
+        print("  llc -F                 # 显示类型指示符")
+        print("  llc -R                 # 递归列出子目录")
         print("  llc -e file.txt \"备注\" # 设置注释")
     }
 
-    func listDirectory(path: String, showHidden: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, showInode: Bool) {
+    func listDirectory(path: String, showHidden: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, showInode: Bool, classify: Bool = false) {
         let fileManager = FileManager.default
         do {
             var contents = try fileManager.contentsOfDirectory(atPath: path)
@@ -231,7 +248,7 @@ struct llc {
             let comments = parallelGetComments(paths: fullPaths)
 
             for (index, info) in fileInfos.enumerated() {
-                listFile(path: info.path, attrs: info.attrs, comment: comments[index], humanReadable: humanReadable, showInode: showInode)
+                listFile(path: info.path, attrs: info.attrs, comment: comments[index], humanReadable: humanReadable, showInode: showInode, classify: classify)
             }
         } catch {
             print("llc: cannot open directory '\(path)': \(error.localizedDescription)")
@@ -240,12 +257,22 @@ struct llc {
     }
 
     func parallelGetComments(paths: [String]) -> [String] {
-        let results = UnsafeMutablePointer<String>.allocate(capacity: paths.count)
-        for i in 0..<paths.count {
-            results[i] = ""
-        }
-        defer { results.deallocate() }
+        final class ResultBox: @unchecked Sendable {
+            var results: [String]
+            let lock = NSLock()
 
+            init(count: Int) {
+                self.results = Array(repeating: "", count: count)
+            }
+
+            func setComment(_ comment: String, at index: Int) {
+                lock.lock()
+                results[index] = comment
+                lock.unlock()
+            }
+        }
+
+        let resultBox = ResultBox(count: paths.count)
         let group = DispatchGroup()
 
         for (index, path) in paths.enumerated() {
@@ -253,22 +280,43 @@ struct llc {
             DispatchQueue.global().async {
                 autoreleasepool {
                     let comment = getFinderComment(path: path)
-                    results[index] = comment
+                    resultBox.setComment(comment, at: index)
                 }
                 group.leave()
             }
         }
 
         group.wait()
-
-        var output: [String] = []
-        for i in 0..<paths.count {
-            output.append(results[i])
-        }
-        return output
+        return resultBox.results
     }
 
-    func listFile(path: String, attrs: [FileAttributeKey: Any]? = nil, comment: String? = nil, humanReadable: Bool = false, showInode: Bool = false) {
+    func getTypeIndicator(fileType: FileAttributeType, permissions: Int, path: String) -> String {
+        switch fileType {
+        case .typeDirectory:
+            return "/"
+        case .typeSymbolicLink:
+            return "@"
+        default:
+            // 检查是否为套接字或FIFO
+            var statBuf = stat()
+            if stat(path, &statBuf) == 0 {
+                let mode = statBuf.st_mode
+                if (mode & S_IFMT) == S_IFSOCK {
+                    return "="
+                }
+                if (mode & S_IFMT) == S_IFIFO {
+                    return "|"
+                }
+            }
+            // 检查是否可执行
+            if (permissions & 0o111) != 0 {
+                return "*"
+            }
+            return ""
+        }
+    }
+
+    func listFile(path: String, attrs: [FileAttributeKey: Any]? = nil, comment: String? = nil, humanReadable: Bool = false, showInode: Bool = false, classify: Bool = false) {
         let fileManager = FileManager.default
 
         let fileAttrs: [FileAttributeKey: Any]
@@ -310,6 +358,9 @@ struct llc {
         let name = (path as NSString).lastPathComponent
         let fileComment = comment ?? getFinderComment(path: path)
 
+        // 获取类型指示符
+        let typeIndicator = classify ? getTypeIndicator(fileType: fileType, permissions: permissions, path: path) : ""
+
         let nameColor: String
         let isExecutable = (permissions & 0o111) != 0
         switch fileType {
@@ -324,7 +375,7 @@ struct llc {
         let commentColor = Colors.gray
 
         if useColor {
-            let coloredName = "\(nameColor)\(name)\(Colors.reset)"
+            let coloredName = "\(nameColor)\(name)\(typeIndicator)\(Colors.reset)"
             let coloredComment = fileComment.isEmpty ? "" : "  \(commentColor)[\(fileComment)]\(Colors.reset)"
 
             output += String(format: "%@ %2d %@ %@ %@ %@ %@%@",
@@ -338,14 +389,15 @@ struct llc {
                 coloredComment
             )
         } else {
-            output += String(format: "%@ %2d %@ %@ %@ %@ %@",
+            output += String(format: "%@ %2d %@ %@ %@ %@ %@%@",
                 modeString,
                 fileAttrs[.referenceCount] as? Int ?? 1,
                 owner.padding(toLength: 8, withPad: " ", startingAt: 0),
                 group.padding(toLength: 8, withPad: " ", startingAt: 0),
                 sizeString,
                 dateString,
-                name
+                name,
+                typeIndicator
             )
 
             if !fileComment.isEmpty {
@@ -416,6 +468,46 @@ struct llc {
 
         formatter.locale = Locale(identifier: "en_US")
         return formatter.string(from: date)
+    }
+
+    func listDirectoryRecursive(path: String, showHidden: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, showInode: Bool, classify: Bool, visitedPaths: Set<String> = [], depth: Int = 0) {
+        // 防止循环引用和过深层级
+        let canonicalPath = (path as NSString).standardizingPath
+        if visitedPaths.contains(canonicalPath) || depth > 10 {
+            return
+        }
+        var newVisitedPaths = visitedPaths
+        newVisitedPaths.insert(canonicalPath)
+
+        // 打印当前目录路径
+        if depth > 0 {
+            print("")
+        }
+        print("\(path):")
+
+        // 先列出当前目录内容
+        listDirectory(path: path, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify)
+
+        // 获取子目录列表
+        let fileManager = FileManager.default
+        do {
+            let contents = try fileManager.contentsOfDirectory(atPath: path)
+            for item in contents {
+                if item.hasPrefix(".") && !showHidden {
+                    continue
+                }
+                let fullPath = (path as NSString).appendingPathComponent(item)
+                var isDir: ObjCBool = false
+                if fileManager.fileExists(atPath: fullPath, isDirectory: &isDir) {
+                    if isDir.boolValue {
+                        // 递归处理子目录
+                        listDirectoryRecursive(path: fullPath, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify, visitedPaths: newVisitedPaths, depth: depth + 1)
+                    }
+                }
+            }
+        } catch {
+            // 忽略无法访问的目录
+        }
     }
 
     func setFinderComment(path: String, comment: String) {
