@@ -173,6 +173,7 @@ struct llc {
 
         // 应用配置文件默认值
         var showHidden = config.showHidden
+        var showAlmostAll = false
         var showInode = false
         var listDirectoryItself = false
         var humanReadable = config.humanReadable
@@ -181,6 +182,7 @@ struct llc {
         var sortBy: SortBy = config.sort
         var reverseSort = false
         var groupDirectoriesFirst = config.groupDirectoriesFirst
+        var singleColumn = false
         var editComment: String? = nil
         var path: String? = nil
 
@@ -199,6 +201,7 @@ struct llc {
                 for flag in flags {
                     switch flag {
                     case "a": showHidden = true
+                    case "A": showAlmostAll = true
                     case "i": showInode = true
                     case "d": listDirectoryItself = true
                     case "h": humanReadable = true
@@ -210,6 +213,7 @@ struct llc {
                     case "r": reverseSort = true
                     case "R": recursive = true
                     case "l": break // -l 是默认行为，不需要处理
+                    case "1": singleColumn = true
                     default:
                         print("llc: 无效选项 -- '\(flag)'")
                         exit(1)
@@ -241,6 +245,18 @@ struct llc {
                 }
             } else if arg == "--group-directories-first" {
                 groupDirectoriesFirst = true
+            } else if arg.hasPrefix("--time-style=") {
+                let value = String(arg.dropFirst("--time-style=".count))
+                switch value.lowercased() {
+                case "default": timeStyle = .default
+                case "iso": timeStyle = .iso
+                case "long-iso": timeStyle = .longIso
+                case "full-iso": timeStyle = .fullIso
+                default:
+                    print("llc: 无效的时间格式 -- '\(value)'")
+                    print("有效的格式: default, iso, long-iso, full-iso")
+                    exit(1)
+                }
             } else if arg == "--help" {
                 printHelp()
                 exit(0)
@@ -267,14 +283,24 @@ struct llc {
 
         if isDirectory.boolValue {
             if recursive {
-                listDirectoryRecursive(path: expandedPath, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify)
+                listDirectoryRecursive(path: expandedPath, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify, singleColumn: singleColumn)
             } else if listDirectoryItself {
-                listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode, classify: classify)
+                if singleColumn {
+                    print(getFileNameWithColor(path: expandedPath))
+                } else {
+                    listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode, classify: classify)
+                }
+            } else if singleColumn {
+                listDirectorySingleColumn(path: expandedPath, showHidden: showHidden, showAlmostAll: showAlmostAll, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: groupDirectoriesFirst, classify: classify)
             } else {
-                listDirectory(path: expandedPath, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: groupDirectoriesFirst, showInode: showInode, classify: classify)
+                listDirectory(path: expandedPath, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: groupDirectoriesFirst, showInode: showInode, classify: classify)
             }
         } else {
-            listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode, classify: classify)
+            if singleColumn {
+                print(getFileNameWithColor(path: expandedPath))
+            } else {
+                listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode, classify: classify)
+            }
         }
     }
 
@@ -287,7 +313,9 @@ struct llc {
         print("用法: llc [选项] [路径]")
         print("")
         print("选项:")
-        print("  -a              显示所有文件，包括隐藏文件")
+        print("  -a              显示所有文件，包括隐藏文件（包括 . 和 ..）")
+        print("  -A              显示所有文件，包括隐藏文件（不包括 . 和 ..）")
+        print("  -1              单列输出（每行一个文件名）")
         print("  -i              显示文件的 inode 号")
         print("  -d              列出目录本身，而非其内容")
         print("  -h, --human-readable  以人类可读格式显示文件大小 (KB, MB, GB)")
@@ -297,6 +325,7 @@ struct llc {
         print("  -r              反向排序")
         print("  -R              递归列出子目录")
         print("  --group-directories-first  目录排在文件前面")
+        print("  --time-style=STYLE  时间显示格式: default, iso, long-iso, full-iso")
         print("  --color         强制启用颜色输出")
         print("  --no-color      禁用颜色输出")
         print("  -e 文件 \"备注\"  设置 Finder 注释")
@@ -339,14 +368,19 @@ struct llc {
         print("  llc -e file.txt \"备注\" # 设置注释")
     }
 
-    func listDirectory(path: String, showHidden: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, groupDirectoriesFirst: Bool = false, showInode: Bool, classify: Bool = false) {
+    func listDirectory(path: String, showHidden: Bool, showAlmostAll: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, groupDirectoriesFirst: Bool = false, showInode: Bool, classify: Bool = false) {
         let fileManager = FileManager.default
         do {
             var contents = try fileManager.contentsOfDirectory(atPath: path)
 
-            if !showHidden {
+            if showAlmostAll {
+                // -A: 显示所有文件，但排除 . 和 ..
+                contents = contents.filter { !$0.hasPrefix(".") } + contents.filter { $0.hasPrefix(".") && $0 != "." && $0 != ".." }
+            } else if !showHidden {
+                // 默认: 不显示隐藏文件
                 contents = contents.filter { !$0.hasPrefix(".") }
             } else {
+                // -a: 显示所有文件，包括 . 和 ..
                 contents.insert(".", at: 0)
                 contents.insert("..", at: 1)
             }
@@ -626,14 +660,22 @@ struct llc {
             formatter.dateFormat = "yyyy-MM-dd HH:mm"
             formatter.locale = Locale(identifier: "en_US")
         case .fullIso:
-            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS"
+            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            formatter.timeZone = TimeZone.current
             formatter.locale = Locale(identifier: "en_US")
+            let dateStr = formatter.string(from: date)
+            // 添加时区偏移 (如 +0800)
+            let tzFormatter = DateFormatter()
+            tzFormatter.dateFormat = "Z"
+            tzFormatter.timeZone = TimeZone.current
+            let tzStr = tzFormatter.string(from: date)
+            return "\(dateStr) \(tzStr)"
         }
 
         return formatter.string(from: date)
     }
 
-    func listDirectoryRecursive(path: String, showHidden: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, showInode: Bool, classify: Bool, visitedPaths: Set<String> = [], depth: Int = 0) {
+    func listDirectoryRecursive(path: String, showHidden: Bool, showAlmostAll: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, showInode: Bool, classify: Bool, singleColumn: Bool = false, visitedPaths: Set<String> = [], depth: Int = 0) {
         // 防止循环引用和过深层级
         let canonicalPath = (path as NSString).standardizingPath
         if visitedPaths.contains(canonicalPath) || depth > 10 {
@@ -649,14 +691,18 @@ struct llc {
         print("\(path):")
 
         // 先列出当前目录内容
-        listDirectory(path: path, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify)
+        if singleColumn {
+            listDirectorySingleColumn(path: path, showHidden: showHidden, showAlmostAll: showAlmostAll, sortBy: sortBy, reverseSort: reverseSort, groupDirectoriesFirst: false, classify: classify)
+        } else {
+            listDirectory(path: path, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify)
+        }
 
         // 获取子目录列表
         let fileManager = FileManager.default
         do {
             let contents = try fileManager.contentsOfDirectory(atPath: path)
             for item in contents {
-                if item.hasPrefix(".") && !showHidden {
+                if item.hasPrefix(".") && !showHidden && !showAlmostAll {
                     continue
                 }
                 let fullPath = (path as NSString).appendingPathComponent(item)
@@ -664,12 +710,112 @@ struct llc {
                 if fileManager.fileExists(atPath: fullPath, isDirectory: &isDir) {
                     if isDir.boolValue {
                         // 递归处理子目录
-                        listDirectoryRecursive(path: fullPath, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify, visitedPaths: newVisitedPaths, depth: depth + 1)
+                        listDirectoryRecursive(path: fullPath, showHidden: showHidden, showAlmostAll: showAlmostAll, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode, classify: classify, singleColumn: singleColumn, visitedPaths: newVisitedPaths, depth: depth + 1)
                     }
                 }
             }
         } catch {
             // 忽略无法访问的目录
+        }
+    }
+
+    func getFileNameWithColor(path: String, classify: Bool = false) -> String {
+        let fileManager = FileManager.default
+        let name = (path as NSString).lastPathComponent
+
+        guard let attrs = try? fileManager.attributesOfItem(atPath: path) else {
+            return name
+        }
+
+        let fileType = attrs[.type] as? FileAttributeType ?? .typeRegular
+        let permissions = attrs[.posixPermissions] as? Int ?? 0
+        let isExecutable = (permissions & 0o111) != 0
+
+        // 获取类型指示符
+        let typeIndicator = classify ? getTypeIndicator(fileType: fileType, permissions: permissions, path: path) : ""
+
+        if !useColor {
+            return name + typeIndicator
+        }
+
+        let nameColor: String
+        switch fileType {
+        case .typeDirectory:
+            nameColor = Colors.blue + Colors.bold
+        case .typeSymbolicLink:
+            nameColor = Colors.cyan
+        default:
+            nameColor = isExecutable ? Colors.green : Colors.reset
+        }
+
+        return "\(nameColor)\(name)\(typeIndicator)\(Colors.reset)"
+    }
+
+    func listDirectorySingleColumn(path: String, showHidden: Bool, showAlmostAll: Bool, sortBy: SortBy, reverseSort: Bool, groupDirectoriesFirst: Bool = false, classify: Bool = false) {
+        let fileManager = FileManager.default
+        do {
+            var contents = try fileManager.contentsOfDirectory(atPath: path)
+
+            if showAlmostAll {
+                // -A: 显示所有文件，但排除 . 和 ..
+                contents = contents.filter { !$0.hasPrefix(".") } + contents.filter { $0.hasPrefix(".") && $0 != "." && $0 != ".." }
+            } else if !showHidden {
+                // 默认: 不显示隐藏文件
+                contents = contents.filter { !$0.hasPrefix(".") }
+            } else {
+                // -a: 显示所有文件，包括 . 和 ..
+                contents.insert(".", at: 0)
+                contents.insert("..", at: 1)
+            }
+
+            var fileInfos: [(name: String, path: String, attrs: [FileAttributeKey: Any], isDir: Bool)] = []
+            for item in contents {
+                let fullPath = (path as NSString).appendingPathComponent(item)
+                if let attrs = try? fileManager.attributesOfItem(atPath: fullPath) {
+                    let fileType = attrs[.type] as? FileAttributeType ?? .typeRegular
+                    let isDir = fileType == .typeDirectory
+                    fileInfos.append((name: item, path: fullPath, attrs: attrs, isDir: isDir))
+                }
+            }
+
+            fileInfos.sort { (a: (name: String, path: String, attrs: [FileAttributeKey: Any], isDir: Bool), b: (name: String, path: String, attrs: [FileAttributeKey: Any], isDir: Bool)) -> Bool in
+                // 如果启用目录优先，先按目录/文件排序
+                if groupDirectoriesFirst && a.isDir != b.isDir {
+                    return a.isDir && !b.isDir
+                }
+
+                switch sortBy {
+                case .name:
+                    return a.name.localizedStandardCompare(b.name) == .orderedAscending
+                case .time:
+                    let time0 = a.attrs[.modificationDate] as? Date ?? Date.distantPast
+                    let time1 = b.attrs[.modificationDate] as? Date ?? Date.distantPast
+                    return time0 > time1
+                case .size:
+                    let size0 = a.attrs[.size] as? Int64 ?? 0
+                    let size1 = b.attrs[.size] as? Int64 ?? 0
+                    return size0 > size1
+                case .atime:
+                    let time0 = a.attrs[.modificationDate] as? Date ?? Date.distantPast
+                    let time1 = b.attrs[.modificationDate] as? Date ?? Date.distantPast
+                    return time0 > time1
+                case .ctime:
+                    let time0 = a.attrs[.modificationDate] as? Date ?? Date.distantPast
+                    let time1 = b.attrs[.modificationDate] as? Date ?? Date.distantPast
+                    return time0 > time1
+                }
+            }
+
+            if reverseSort {
+                fileInfos.reverse()
+            }
+
+            for info in fileInfos {
+                print(getFileNameWithColor(path: info.path, classify: classify))
+            }
+        } catch {
+            print("llc: cannot open directory '\(path)': \(error.localizedDescription)")
+            exit(1)
         }
     }
 
