@@ -103,13 +103,25 @@ func main() {
 	if *editComment != "" {
 		args := flag.Args()
 		commentText := *editCommentText
-		if commentText == "" && len(args) > 0 {
-			commentText = args[0]
-		}
+
+		// If --comment is not set, use remaining args
 		if commentText == "" {
-			fmt.Fprintf(os.Stderr, "llc: -e 需要指定备注内容\n")
-			os.Exit(1)
+			if len(args) == 0 {
+				fmt.Fprintf(os.Stderr, "llc: -e 需要指定备注内容\n")
+				fmt.Fprintf(os.Stderr, "用法: llc -e <文件> \"备注内容\"\n")
+				os.Exit(1)
+			}
+			// Last arg is the comment, all others are additional files
+			commentText = args[len(args)-1]
+			// Add any middle args to file list (shell may expand wildcards)
+			for i := 0; i < len(args)-1; i++ {
+				if err := setCommentSingle(args[i], commentText); err != nil {
+					fmt.Fprintf(os.Stderr, "llc: %v\n", err)
+				}
+			}
 		}
+
+		// Set comment for the main file (may contain wildcards)
 		if err := setComment(*editComment, commentText); err != nil {
 			fmt.Fprintf(os.Stderr, "llc: %v\n", err)
 			os.Exit(1)
