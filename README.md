@@ -404,6 +404,10 @@ sudo rm /usr/local/bin/llc
 rm ~/.llcrc
 ```
 
+## 友情链接
+
+- [Linux DO](https://linux.do/) - 中文 Linux 社区
+
 ## 许可
 
 MIT License
