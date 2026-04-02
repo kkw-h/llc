@@ -3,7 +3,7 @@ import CoreServices
 import Darwin
 
 // 版本信息
-let VERSION = "1.4.0"
+let VERSION = "1.5.0"
 
 // ANSI 颜色代码
 struct Colors {
