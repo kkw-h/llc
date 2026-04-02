@@ -1,8 +1,9 @@
 import Foundation
 import CoreServices
+import Darwin
 
 // 版本信息
-let VERSION = "1.1.0"
+let VERSION = "1.2.0"
 
 // ANSI 颜色代码
 struct Colors {
@@ -26,12 +27,24 @@ enum SortBy {
     case size
 }
 
-@main
-@MainActor
-struct llc {
-    static var forceColor: Bool = false
+// 获取 Finder 注释 - 全局函数避免 actor 隔离问题
+func getFinderComment(path: String) -> String {
+    let nsUrl = URL(fileURLWithPath: path) as NSURL
+    guard let metadataItem = MDItemCreateWithURL(nil, nsUrl as CFURL) else {
+        return ""
+    }
+    guard let comment = MDItemCopyAttribute(metadataItem, kMDItemFinderComment) else {
+        return ""
+    }
+    return comment as? String ?? ""
+}
 
-    static var useColor: Bool {
+@main
+struct llc {
+    // 使用实例属性而非静态属性
+    var forceColor: Bool = false
+    var useColor: Bool {
+        if getenv("NO_COLOR") != nil { return false }
         if forceColor { return true }
         if let term = getenv("TERM") {
             let termStr = String(cString: term)
@@ -41,9 +54,16 @@ struct llc {
     }
 
     static func main() {
+        var instance = llc()
+        instance.run()
+    }
+
+    mutating func run() {
         let arguments = CommandLine.arguments
 
         var showHidden = false
+        var showInode = false
+        var listDirectoryItself = false
         var humanReadable = false
         var sortBy: SortBy = .name
         var reverseSort = false
@@ -53,16 +73,26 @@ struct llc {
         var i = 1
         while i < arguments.count {
             let arg = arguments[i]
-            if arg == "-a" {
-                showHidden = true
-            } else if arg == "-h" || arg == "--human-readable" {
+            if arg.hasPrefix("-") && arg.count > 1 && !arg.hasPrefix("--") {
+                // 解析组合选项如 -li
+                let flags = arg.dropFirst()
+                for flag in flags {
+                    switch flag {
+                    case "a": showHidden = true
+                    case "i": showInode = true
+                    case "d": listDirectoryItself = true
+                    case "h": humanReadable = true
+                    case "t": sortBy = .time
+                    case "S": sortBy = .size
+                    case "r": reverseSort = true
+                    case "l": break // -l 是默认行为，不需要处理
+                    default:
+                        print("llc: 无效选项 -- '\(flag)'")
+                        exit(1)
+                    }
+                }
+            } else if arg == "--human-readable" {
                 humanReadable = true
-            } else if arg == "-t" {
-                sortBy = .time
-            } else if arg == "-S" {
-                sortBy = .size
-            } else if arg == "-r" {
-                reverseSort = true
             } else if arg == "--color" {
                 forceColor = true
             } else if arg == "--version" {
@@ -108,22 +138,28 @@ struct llc {
         }
 
         if isDirectory.boolValue {
-            listDirectory(path: expandedPath, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort)
+            if listDirectoryItself {
+                listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode)
+            } else {
+                listDirectory(path: expandedPath, showHidden: showHidden, humanReadable: humanReadable, sortBy: sortBy, reverseSort: reverseSort, showInode: showInode)
+            }
         } else {
-            listFile(path: expandedPath, humanReadable: humanReadable)
+            listFile(path: expandedPath, humanReadable: humanReadable, showInode: showInode)
         }
     }
 
-    static func printVersion() {
+    func printVersion() {
         print("llc version \(VERSION)")
         print("macOS enhanced ls command with Finder comments")
     }
 
-    static func printHelp() {
+    func printHelp() {
         print("用法: llc [选项] [路径]")
         print("")
         print("选项:")
         print("  -a              显示所有文件，包括隐藏文件")
+        print("  -i              显示文件的 inode 号")
+        print("  -d              列出目录本身，而非其内容")
         print("  -h, --human-readable  以人类可读格式显示文件大小 (KB, MB, GB)")
         print("  -t              按修改时间排序（最新的在前）")
         print("  -S              按文件大小排序（最大的在前）")
@@ -132,6 +168,9 @@ struct llc {
         print("  -e 文件 \"备注\"  设置 Finder 注释")
         print("  --help          显示帮助信息")
         print("  --version       显示版本信息")
+        print("")
+        print("环境变量:")
+        print("  NO_COLOR=1      禁用颜色输出")
         print("")
         print("颜色说明:")
         print("  蓝色粗体 = 目录")
@@ -144,12 +183,12 @@ struct llc {
         print("  llc -a                 # 列出所有文件")
         print("  llc -lh                # 人类可读大小")
         print("  llc -lt                # 按时间排序")
-        print("  llc -lS                # 按大小排序")
-        print("  llc -ltr               # 按时间反向排序")
+        print("  llc -li                # 显示 inode 号")
+        print("  llc -ld /tmp           # 列出目录本身")
         print("  llc -e file.txt \"备注\" # 设置注释")
     }
 
-    static func listDirectory(path: String, showHidden: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool) {
+    func listDirectory(path: String, showHidden: Bool, humanReadable: Bool, sortBy: SortBy, reverseSort: Bool, showInode: Bool) {
         let fileManager = FileManager.default
         do {
             var contents = try fileManager.contentsOfDirectory(atPath: path)
@@ -161,7 +200,6 @@ struct llc {
                 contents.insert("..", at: 1)
             }
 
-            // 获取文件信息用于排序
             var fileInfos: [(name: String, path: String, attrs: [FileAttributeKey: Any])] = []
             for item in contents {
                 let fullPath = (path as NSString).appendingPathComponent(item)
@@ -170,7 +208,6 @@ struct llc {
                 }
             }
 
-            // 排序
             fileInfos.sort {
                 switch sortBy {
                 case .name:
@@ -194,7 +231,7 @@ struct llc {
             let comments = parallelGetComments(paths: fullPaths)
 
             for (index, info) in fileInfos.enumerated() {
-                listFile(path: info.path, attrs: info.attrs, comment: comments[index], humanReadable: humanReadable)
+                listFile(path: info.path, attrs: info.attrs, comment: comments[index], humanReadable: humanReadable, showInode: showInode)
             }
         } catch {
             print("llc: cannot open directory '\(path)': \(error.localizedDescription)")
@@ -202,27 +239,36 @@ struct llc {
         }
     }
 
-    static func parallelGetComments(paths: [String]) -> [String] {
-        var results = Array(repeating: "", count: paths.count)
+    func parallelGetComments(paths: [String]) -> [String] {
+        let results = UnsafeMutablePointer<String>.allocate(capacity: paths.count)
+        for i in 0..<paths.count {
+            results[i] = ""
+        }
+        defer { results.deallocate() }
+
         let group = DispatchGroup()
-        let lock = NSLock()
 
         for (index, path) in paths.enumerated() {
             group.enter()
             DispatchQueue.global().async {
-                let comment = getFinderComment(path: path)
-                lock.lock()
-                results[index] = comment
-                lock.unlock()
+                autoreleasepool {
+                    let comment = getFinderComment(path: path)
+                    results[index] = comment
+                }
                 group.leave()
             }
         }
 
         group.wait()
-        return results
+
+        var output: [String] = []
+        for i in 0..<paths.count {
+            output.append(results[i])
+        }
+        return output
     }
 
-    static func listFile(path: String, attrs: [FileAttributeKey: Any]? = nil, comment: String? = nil, humanReadable: Bool = false) {
+    func listFile(path: String, attrs: [FileAttributeKey: Any]? = nil, comment: String? = nil, humanReadable: Bool = false, showInode: Bool = false) {
         let fileManager = FileManager.default
 
         let fileAttrs: [FileAttributeKey: Any]
@@ -242,7 +288,23 @@ struct llc {
         let size = fileAttrs[.size] as? Int64 ?? 0
         let modDate = fileAttrs[.modificationDate] as? Date ?? Date()
 
-        let modeString = modeToString(type: fileType, mode: permissions) + " "
+        // 使用 stat 获取 inode
+        var inode: UInt64 = 0
+        if showInode {
+            var statBuf = stat()
+            let result = stat(path, &statBuf)
+            if result == 0 {
+                inode = UInt64(statBuf.st_ino)
+            }
+        }
+
+        var output = ""
+
+        if showInode {
+            output += String(format: "%10llu ", inode)
+        }
+
+        let modeString = modeToString(type: fileType, mode: permissions)
         let sizeString = humanReadable ? formatSizeHumanReadable(size) : formatSize(size)
         let dateString = formatDate(modDate)
         let name = (path as NSString).lastPathComponent
@@ -265,7 +327,7 @@ struct llc {
             let coloredName = "\(nameColor)\(name)\(Colors.reset)"
             let coloredComment = fileComment.isEmpty ? "" : "  \(commentColor)[\(fileComment)]\(Colors.reset)"
 
-            let output = String(format: "%@ %2d %@ %@ %@ %@ %@%@",
+            output += String(format: "%@ %2d %@ %@ %@ %@ %@%@",
                 modeString,
                 fileAttrs[.referenceCount] as? Int ?? 1,
                 owner.padding(toLength: 8, withPad: " ", startingAt: 0),
@@ -275,9 +337,8 @@ struct llc {
                 coloredName,
                 coloredComment
             )
-            print(output)
         } else {
-            var output = String(format: "%@ %2d %@ %@ %@ %@ %@",
+            output += String(format: "%@ %2d %@ %@ %@ %@ %@",
                 modeString,
                 fileAttrs[.referenceCount] as? Int ?? 1,
                 owner.padding(toLength: 8, withPad: " ", startingAt: 0),
@@ -290,11 +351,12 @@ struct llc {
             if !fileComment.isEmpty {
                 output += "  [\(fileComment)]"
             }
-            print(output)
         }
+
+        print(output)
     }
 
-    static func modeToString(type: FileAttributeType, mode: Int) -> String {
+    func modeToString(type: FileAttributeType, mode: Int) -> String {
         var result = ""
 
         switch type {
@@ -321,11 +383,11 @@ struct llc {
         return result
     }
 
-    static func formatSize(_ size: Int64) -> String {
+    func formatSize(_ size: Int64) -> String {
         return String(format: "%8lld", size)
     }
 
-    static func formatSizeHumanReadable(_ size: Int64) -> String {
+    func formatSizeHumanReadable(_ size: Int64) -> String {
         let units = ["B", "K", "M", "G", "T", "P"]
         var value = Double(size)
         var unitIndex = 0
@@ -342,7 +404,7 @@ struct llc {
         }
     }
 
-    static func formatDate(_ date: Date) -> String {
+    func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         let calendar = Calendar.current
 
@@ -356,20 +418,7 @@ struct llc {
         return formatter.string(from: date)
     }
 
-    static func getFinderComment(path: String) -> String {
-        let nsUrl = URL(fileURLWithPath: path) as NSURL
-        guard let metadataItem = MDItemCreateWithURL(nil, nsUrl as CFURL) else {
-            return ""
-        }
-
-        guard let comment = MDItemCopyAttribute(metadataItem, kMDItemFinderComment) else {
-            return ""
-        }
-
-        return comment as? String ?? ""
-    }
-
-    static func setFinderComment(path: String, comment: String) {
+    func setFinderComment(path: String, comment: String) {
         let fileManager = FileManager.default
 
         guard fileManager.fileExists(atPath: path) else {
