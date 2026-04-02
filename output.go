@@ -286,22 +286,6 @@ func sortFiles(files []FileInfo, sortBy string, reverse, groupDirsFirst bool) {
 	sort.Slice(files, less)
 }
 
-// getAccessTime returns the access time from FileInfo
-func getAccessTime(info os.FileInfo) time.Time {
-	if sys, ok := info.Sys().(*syscall.Stat_t); ok {
-		return time.Unix(sys.Atim.Sec, sys.Atim.Nsec)
-	}
-	return info.ModTime()
-}
-
-// getCreateTime returns the creation time from FileInfo
-func getCreateTime(info os.FileInfo) time.Time {
-	if sys, ok := info.Sys().(*syscall.Stat_t); ok {
-		return time.Unix(sys.Ctim.Sec, sys.Ctim.Nsec)
-	}
-	return info.ModTime()
-}
-
 // fetchCommentsParallel fetches comments concurrently
 func fetchCommentsParallel(files []FileInfo) []string {
 	comments := make([]string, len(files))
