@@ -1,8 +1,35 @@
 import Foundation
 import CoreServices
 
+// ANSI 颜色代码
+struct Colors {
+    static let reset = "\u{001B}[0m"
+    static let bold = "\u{001B}[1m"
+    static let black = "\u{001B}[30m"
+    static let red = "\u{001B}[31m"
+    static let green = "\u{001B}[32m"
+    static let yellow = "\u{001B}[33m"
+    static let blue = "\u{001B}[34m"
+    static let magenta = "\u{001B}[35m"
+    static let cyan = "\u{001B}[36m"
+    static let white = "\u{001B}[37m"
+    static let gray = "\u{001B}[90m"
+}
+
 @main
+@MainActor
 struct llc {
+    static var forceColor: Bool = false
+
+    static var useColor: Bool {
+        if forceColor { return true }
+        // 检查是否在终端中且支持颜色
+        if let term = getenv("TERM") {
+            let termStr = String(cString: term)
+            return termStr != "dumb" && isatty(fileno(stdout)) != 0
+        }
+        return false
+    }
     static func main() {
         let arguments = CommandLine.arguments
 
@@ -15,6 +42,8 @@ struct llc {
             let arg = arguments[i]
             if arg == "-a" {
                 showHidden = true
+            } else if arg == "--color" {
+                forceColor = true
             } else if arg == "-e" {
                 // -e 文件夹 "备注信息"
                 i += 1
@@ -68,12 +97,20 @@ struct llc {
         print("")
         print("选项:")
         print("  -a          显示所有文件，包括隐藏文件")
+        print("  --color     强制启用颜色输出")
         print("  -e 文件夹 \"备注\"  设置 Finder 注释")
         print("  -h, --help  显示帮助信息")
+        print("")
+        print("颜色说明:")
+        print("  蓝色粗体 = 目录")
+        print("  绿色     = 可执行文件")
+        print("  青色     = 符号链接")
+        print("  灰色     = 注释")
         print("")
         print("示例:")
         print("  llc                    # 列出当前目录")
         print("  llc -a                 # 列出所有文件")
+        print("  llc --color            # 强制启用颜色")
         print("  llc -e file.txt \"重要文档\"  # 设置文件注释")
         print("")
         print("llc 是 ls -l 的增强版本，显示文件列表并在最后显示 Finder 注释")
@@ -148,21 +185,55 @@ struct llc {
         let name = (path as NSString).lastPathComponent
         let fileComment = comment ?? getFinderComment(path: path)
 
-        var output = String(format: "%@ %2d %@ %@ %@ %@ %@",
-            modeString,
-            attrs[.referenceCount] as? Int ?? 1,
-            owner.padding(toLength: 8, withPad: " ", startingAt: 0),
-            group.padding(toLength: 8, withPad: " ", startingAt: 0),
-            sizeString,
-            dateString,
-            name
-        )
-
-        if !fileComment.isEmpty {
-            output += "  [\(fileComment)]"
+        // 根据文件类型选择颜色
+        let nameColor: String
+        let isExecutable = (permissions & 0o111) != 0
+        switch fileType {
+        case .typeDirectory:
+            nameColor = Colors.blue + Colors.bold
+        case .typeSymbolicLink:
+            nameColor = Colors.cyan
+        default:
+            if isExecutable {
+                nameColor = Colors.green
+            } else {
+                nameColor = Colors.reset
+            }
         }
 
-        print(output)
+        let commentColor = Colors.gray
+
+        if useColor {
+            let coloredName = "\(nameColor)\(name)\(Colors.reset)"
+            let coloredComment = fileComment.isEmpty ? "" : "  \(commentColor)[\(fileComment)]\(Colors.reset)"
+
+            let output = String(format: "%@ %2d %@ %@ %@ %@ %@%@",
+                modeString,
+                attrs[.referenceCount] as? Int ?? 1,
+                owner.padding(toLength: 8, withPad: " ", startingAt: 0),
+                group.padding(toLength: 8, withPad: " ", startingAt: 0),
+                sizeString,
+                dateString,
+                coloredName,
+                coloredComment
+            )
+            print(output)
+        } else {
+            var output = String(format: "%@ %2d %@ %@ %@ %@ %@",
+                modeString,
+                attrs[.referenceCount] as? Int ?? 1,
+                owner.padding(toLength: 8, withPad: " ", startingAt: 0),
+                group.padding(toLength: 8, withPad: " ", startingAt: 0),
+                sizeString,
+                dateString,
+                name
+            )
+
+            if !fileComment.isEmpty {
+                output += "  [\(fileComment)]"
+            }
+            print(output)
+        }
     }
 
     static func modeToString(type: FileAttributeType, mode: Int) -> String {
