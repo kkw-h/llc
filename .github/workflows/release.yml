@@ -10,63 +10,93 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Swift
-        uses: swift-actions/setup-swift@v1
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          swift-version: '5.9'
+          go-version: '1.23'
 
-      - name: Build release binary
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
         run: |
-          swift build -c release
-          # 验证构建产物
-          file .build/release/llc
+          go mod tidy
+          go build -ldflags="-s -w" -o llc-${{ matrix.goos }}-${{ matrix.goarch }}
 
-      - name: Package binary
-        run: |
-          # 创建发布目录
-          mkdir -p llc-macos
-          cp .build/release/llc llc-macos/
-          cp README.md llc-macos/
-          cp CLAUDE.md llc-macos/
-          # 打包
-          tar -czf llc-macos.tar.gz llc-macos/
-          # 生成校验和
-          shasum -a 256 llc-macos.tar.gz > llc-macos.tar.gz.sha256
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llc-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: llc-${{ matrix.goos }}-${{ matrix.goarch }}
+
+  create-release:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            llc-macos.tar.gz
-            llc-macos.tar.gz.sha256
+          files: artifacts/llc-*
           body: |
-            ## llc - macOS 增强版 ls 命令
+            ## llc v2.0.0 - Go Rewrite with Linux Support
 
-            ### 安装
-
-            ```bash
-            # 下载并解压
-tar -xzf llc-macos.tar.gz
-            sudo cp llc-macos/llc /usr/local/bin/
-            ```
-
-            ### 使用方法
+            ### Installation
 
             ```bash
-            llc              # 列出当前目录
-            llc -a           # 列出所有文件（含隐藏文件）
-            llc -e file.txt "备注"  # 设置 Finder 注释
+            # Linux AMD64
+            curl -L -o llc https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/llc-linux-amd64
+            chmod +x llc
+            sudo mv llc /usr/local/bin/
+
+            # macOS Apple Silicon
+            curl -L -o llc https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/llc-darwin-arm64
+            chmod +x llc
+            sudo mv llc /usr/local/bin/
             ```
 
-            ### 系统要求
+            ### Usage
 
-            - macOS 10.14+
+            ```bash
+            llc              # List current directory
+            llc -a           # Show all files (including hidden)
+            llc -h           # Human-readable sizes
+            llc -e file.txt "comment"  # Set file comment
+            ```
+
+            ### Features
+
+            - Cross-platform (Linux & macOS)
+            - File comments via xattr
+            - Colorized output
+            - Multiple sorting options
+            - Configuration file support (~/.llcrc)
 
           draft: false
           prerelease: false
