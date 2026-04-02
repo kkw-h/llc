@@ -1,6 +1,10 @@
 import Foundation
+#if os(macOS)
 import CoreServices
 import Darwin
+#elseif os(Linux)
+import Glibc
+#endif
 
 // 版本信息
 let VERSION = "1.6.0"
@@ -182,8 +186,16 @@ func shouldIgnoreFile(_ name: String, patterns: [String]) -> Bool {
     return false
 }
 
+// xattr 属性名
+#if os(Linux)
+let xattrCommentName = "user.llc.comment"
+#else
+let xattrCommentName = "com.apple.metadata:kMDItemFinderComment"
+#endif
+
 // 获取 Finder 注释 - 全局函数避免 actor 隔离问题
 func getFinderComment(path: String) -> String {
+    #if os(macOS)
     let nsUrl = URL(fileURLWithPath: path) as NSURL
     guard let metadataItem = MDItemCreateWithURL(nil, nsUrl as CFURL) else {
         return ""
@@ -192,6 +204,26 @@ func getFinderComment(path: String) -> String {
         return ""
     }
     return comment as? String ?? ""
+    #elseif os(Linux)
+    // Linux: 使用 xattr 读取扩展属性
+    let cPath = path.cString(using: .utf8)
+    let cName = xattrCommentName.cString(using: .utf8)
+
+    // 先获取需要的缓冲区大小
+    var size = getxattr(cPath, cName, nil, 0)
+    if size < 0 {
+        return ""
+    }
+
+    // 分配缓冲区并读取数据
+    var buffer = [Int8](repeating: 0, count: Int(size) + 1)
+    size = getxattr(cPath, cName, &buffer, buffer.count)
+    if size < 0 {
+        return ""
+    }
+
+    return String(cString: buffer)
+    #endif
 }
 
 @main
@@ -390,7 +422,13 @@ struct llc {
 
     func printVersion() {
         print("llc version \(VERSION)")
-        print("macOS enhanced ls command with Finder comments")
+        #if os(macOS)
+        print("Enhanced ls command with Finder comments support")
+        print("Platform: macOS (using Spotlight metadata)")
+        #elseif os(Linux)
+        print("Enhanced ls command with xattr comments support")
+        print("Platform: Linux (using extended attributes)")
+        #endif
     }
 
     func printHelp() {
@@ -414,7 +452,7 @@ struct llc {
         print("  --time-style=STYLE  时间显示格式: default, iso, long-iso, full-iso")
         print("  --color         强制启用颜色输出")
         print("  --no-color      禁用颜色输出")
-        print("  -e 文件 \"备注\"  设置 Finder 注释 (支持通配符如 *.txt)")
+        print("  -e 文件 \"备注\"  设置文件注释 (支持通配符如 *.txt)")
         print("  --help          显示帮助信息")
         print("  --version       显示版本信息")
         print("")
@@ -442,6 +480,15 @@ struct llc {
         print("  @  = 符号链接")
         print("  =  = 套接字")
         print("  |  = FIFO")
+        print("")
+        print("平台说明:")
+        #if os(macOS)
+        print("  注释存储在 Spotlight 元数据中 (kMDItemFinderComment)")
+        print("  可通过 Finder 的\"显示简介\"查看/编辑注释")
+        #elseif os(Linux)
+        print("  注释存储在 xattr 扩展属性中 (user.llc.comment)")
+        print("  可使用 getfattr/setfattr 命令查看/编辑注释")
+        #endif
         print("")
         print("示例:")
         print("  llc                    # 列出当前目录")
@@ -1047,6 +1094,8 @@ print("  llc -e '*.txt' \"备注\"   # 批量设置 txt 文件注释")
         }
 
         let absolutePath = (path as NSString).standardizingPath
+
+        #if os(macOS)
         let escapedPath = absolutePath.replacingOccurrences(of: "\"", with: "\\\"")
         let escapedComment = comment.replacingOccurrences(of: "\"", with: "\\\"")
 
@@ -1081,5 +1130,27 @@ print("  llc -e '*.txt' \"备注\"   # 批量设置 txt 文件注释")
             print("llc: 设置注释失败: \(errorMsg)")
             exit(1)
         }
+        #elseif os(Linux)
+        // Linux: 使用 xattr 设置扩展属性
+        let cPath = absolutePath.cString(using: .utf8)
+        let cName = xattrCommentName.cString(using: .utf8)
+        let cValue = comment.cString(using: .utf8)
+
+        let result: Int32
+        if comment.isEmpty {
+            // 空注释则删除属性
+            result = removexattr(cPath, cName, 0)
+        } else {
+            result = setxattr(cPath, cName, cValue, comment.utf8.count, 0, 0)
+        }
+
+        if result == 0 {
+            print("已设置注释: [\(comment)] -> \(absolutePath)")
+        } else {
+            let errnoStr = String(cString: strerror(errno)!)
+            print("llc: 设置注释失败: \(errnoStr)")
+            exit(1)
+        }
+        #endif
     }
 }
