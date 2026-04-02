@@ -271,11 +271,10 @@ func fetchCommentsParallel(files []FileInfo) []string {
 }
 
 // listDirectory lists files in a directory
-func listDirectory(dirPath string, showAll, showAlmostAll, humanReadable bool, sortBy string, reverseSort bool, showInode, classify, useColor bool, timeStyle string, ignorePatterns []string, groupDirsFirst, followSymlinks bool) {
+func listDirectory(dirPath string, showAll, showAlmostAll, humanReadable bool, sortBy string, reverseSort bool, showInode, classify, useColor bool, timeStyle string, ignorePatterns []string, groupDirsFirst, followSymlinks bool) error {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "llc: cannot open directory '%s': %v\n", dirPath, err)
-		os.Exit(1)
+		return fmt.Errorf("cannot open directory '%s': %v", dirPath, err)
 	}
 
 	files := collectFiles(entries, dirPath, showAll, showAlmostAll, ignorePatterns)
@@ -285,14 +284,14 @@ func listDirectory(dirPath string, showAll, showAlmostAll, humanReadable bool, s
 	for i, file := range files {
 		listFile(file.Path, file.Info, comments[i], humanReadable, showInode, classify, useColor, timeStyle, followSymlinks)
 	}
+	return nil
 }
 
 // listSingleColumn lists files in a single column
-func listSingleColumn(dirPath string, showAll, showAlmostAll bool, sortBy string, reverseSort, classify, useColor bool, ignorePatterns []string, groupDirsFirst, followSymlinks bool) {
+func listSingleColumn(dirPath string, showAll, showAlmostAll bool, sortBy string, reverseSort, classify, useColor bool, ignorePatterns []string, groupDirsFirst, followSymlinks bool) error {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "llc: cannot open directory '%s': %v\n", dirPath, err)
-		os.Exit(1)
+		return fmt.Errorf("cannot open directory '%s': %v", dirPath, err)
 	}
 
 	files := collectFiles(entries, dirPath, showAll, showAlmostAll, ignorePatterns)
@@ -301,6 +300,7 @@ func listSingleColumn(dirPath string, showAll, showAlmostAll bool, sortBy string
 	for _, file := range files {
 		fmt.Println(getColoredName(file.Path, useColor, classify, followSymlinks))
 	}
+	return nil
 }
 
 // collectFiles collects file information from directory entries
@@ -349,10 +349,10 @@ func collectFiles(entries []os.DirEntry, dirPath string, showAll, showAlmostAll 
 }
 
 // listRecursive lists directory recursively
-func listRecursive(dirPath string, showAll, showAlmostAll, humanReadable bool, sortBy string, reverseSort bool, showInode, classify, useColor bool, timeStyle string, ignorePatterns []string, groupDirsFirst, singleColumn, followSymlinks bool, depth int, visited map[string]bool) {
+func listRecursive(dirPath string, showAll, showAlmostAll, humanReadable bool, sortBy string, reverseSort bool, showInode, classify, useColor bool, timeStyle string, ignorePatterns []string, groupDirsFirst, singleColumn, followSymlinks bool, depth int, visited map[string]bool) error {
 	absPath, _ := filepath.Abs(dirPath)
 	if visited[absPath] || depth > maxRecursionDepth {
-		return
+		return nil
 	}
 	visited[absPath] = true
 
@@ -362,21 +362,28 @@ func listRecursive(dirPath string, showAll, showAlmostAll, humanReadable bool, s
 	fmt.Printf("%s:\n", dirPath)
 
 	if singleColumn {
-		listSingleColumn(dirPath, showAll, showAlmostAll, sortBy, reverseSort, classify, useColor, ignorePatterns, groupDirsFirst, followSymlinks)
+		if err := listSingleColumn(dirPath, showAll, showAlmostAll, sortBy, reverseSort, classify, useColor, ignorePatterns, groupDirsFirst, followSymlinks); err != nil {
+			return err
+		}
 	} else {
-		listDirectory(dirPath, showAll, showAlmostAll, humanReadable, sortBy, reverseSort, showInode, classify, useColor, timeStyle, ignorePatterns, groupDirsFirst, followSymlinks)
+		if err := listDirectory(dirPath, showAll, showAlmostAll, humanReadable, sortBy, reverseSort, showInode, classify, useColor, timeStyle, ignorePatterns, groupDirsFirst, followSymlinks); err != nil {
+			return err
+		}
 	}
 
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
-		return
+		return err
 	}
 
 	subdirs := getSubdirs(entries, dirPath, showAll, showAlmostAll, ignorePatterns, sortBy, reverseSort)
 
 	for _, subdir := range subdirs {
-		listRecursive(subdir, showAll, showAlmostAll, humanReadable, sortBy, reverseSort, showInode, classify, useColor, timeStyle, ignorePatterns, groupDirsFirst, singleColumn, followSymlinks, depth+1, visited)
+		if err := listRecursive(subdir, showAll, showAlmostAll, humanReadable, sortBy, reverseSort, showInode, classify, useColor, timeStyle, ignorePatterns, groupDirsFirst, singleColumn, followSymlinks, depth+1, visited); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // shouldIncludeEntry checks if a file entry should be included based on filters

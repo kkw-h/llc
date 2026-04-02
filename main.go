@@ -110,7 +110,10 @@ func main() {
 			fmt.Fprintf(os.Stderr, "llc: -e 需要指定备注内容\n")
 			os.Exit(1)
 		}
-		setComment(*editComment, commentText)
+		if err := setComment(*editComment, commentText); err != nil {
+			fmt.Fprintf(os.Stderr, "llc: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 
@@ -147,7 +150,10 @@ func main() {
 
 	if info.IsDir() {
 		if *recursive {
-			listRecursive(targetPath, *showAll, *showAlmostAll, *humanReadable, sortBy, *reverseSort, *showInode, *classify, useColor, *timeStyle, ignorePatterns, *groupDirsFirst, *singleColumn, *followSymlinks, 0, make(map[string]bool))
+			if err := listRecursive(targetPath, *showAll, *showAlmostAll, *humanReadable, sortBy, *reverseSort, *showInode, *classify, useColor, *timeStyle, ignorePatterns, *groupDirsFirst, *singleColumn, *followSymlinks, 0, make(map[string]bool)); err != nil {
+				fmt.Fprintf(os.Stderr, "llc: %v\n", err)
+				os.Exit(1)
+			}
 		} else if *listDirSelf {
 			if *singleColumn {
 				fmt.Println(getColoredName(targetPath, useColor, *classify, *followSymlinks))
@@ -155,9 +161,15 @@ func main() {
 				listFile(targetPath, nil, "", *humanReadable, *showInode, *classify, useColor, *timeStyle, *followSymlinks)
 			}
 		} else if *singleColumn {
-			listSingleColumn(targetPath, *showAll, *showAlmostAll, sortBy, *reverseSort, *classify, useColor, ignorePatterns, *groupDirsFirst, *followSymlinks)
+			if err := listSingleColumn(targetPath, *showAll, *showAlmostAll, sortBy, *reverseSort, *classify, useColor, ignorePatterns, *groupDirsFirst, *followSymlinks); err != nil {
+				fmt.Fprintf(os.Stderr, "llc: %v\n", err)
+				os.Exit(1)
+			}
 		} else {
-			listDirectory(targetPath, *showAll, *showAlmostAll, *humanReadable, sortBy, *reverseSort, *showInode, *classify, useColor, *timeStyle, ignorePatterns, *groupDirsFirst, *followSymlinks)
+			if err := listDirectory(targetPath, *showAll, *showAlmostAll, *humanReadable, sortBy, *reverseSort, *showInode, *classify, useColor, *timeStyle, ignorePatterns, *groupDirsFirst, *followSymlinks); err != nil {
+				fmt.Fprintf(os.Stderr, "llc: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	} else {
 		if *singleColumn {
