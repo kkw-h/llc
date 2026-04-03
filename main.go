@@ -9,7 +9,7 @@ import (
 // Application constants
 const (
 	// Version
-	version = "2.1.0"
+	version = "2.2.0"
 
 	// Concurrency limits
 	maxConcurrency = 20
@@ -45,44 +45,45 @@ const (
 
 // Options holds all command-line options
 type Options struct {
-	showAll        bool
-	showAlmostAll  bool
-	singleColumn   bool
-	showInode      bool
-	listDirSelf    bool
-	humanReadable  bool
-	classify       bool
-	followSymlinks bool
-	sortByTime     bool
-	sortBySize     bool
-	sortByAccess   bool
-	sortByCreate   bool
-	sortByExt      bool
-	reverseSort    bool
-	recursive      bool
-	groupDirsFirst bool
-	useGitignore   bool
-	outputJSON     bool
-	outputCSV      bool
-	outputTree     bool
-	colorFlag      string
-	noColor        bool
-	timeStyle      string
-	ignorePattern  string
-	editComment    string
+	showAll         bool
+	showAlmostAll   bool
+	singleColumn    bool
+	showInode       bool
+	listDirSelf     bool
+	humanReadable   bool
+	classify        bool
+	followSymlinks  bool
+	sortByTime      bool
+	sortBySize      bool
+	sortByAccess    bool
+	sortByCreate    bool
+	sortByExt       bool
+	reverseSort     bool
+	recursive       bool
+	groupDirsFirst  bool
+	useGitignore    bool
+	outputJSON      bool
+	outputCSV       bool
+	outputTree      bool
+	colorFlag       string
+	noColor         bool
+	timeStyle       string
+	ignorePattern   string
+	editComment     string
 	editCommentText string
-	showVersion    bool
-	showHelp       bool
+	showVersion     bool
+	showHelp        bool
+	showGitStatus   bool
 }
 
 // AppConfig holds the merged configuration (CLI flags + config file)
 type AppConfig struct {
 	Options
-	sortBy          string
-	ignorePatterns  []string
-	useColor        bool
-	targetPath      string
-	configSort      string
+	sortBy         string
+	ignorePatterns []string
+	useColor       bool
+	targetPath     string
+	configSort     string
 }
 
 func main() {
@@ -145,6 +146,7 @@ func parseFlags() Options {
 	flag.StringVar(&opts.editCommentText, "comment", "", "注释内容（与 -e 配合使用）")
 	flag.BoolVar(&opts.showVersion, "version", false, "显示版本")
 	flag.BoolVar(&opts.showHelp, "help", false, "显示帮助")
+	flag.BoolVar(&opts.showGitStatus, "git", false, "显示 Git 状态")
 
 	flag.Parse()
 	return opts
@@ -254,7 +256,7 @@ func handleDirectory(cfg AppConfig, info os.FileInfo) error {
 	if cfg.recursive {
 		return listRecursive(cfg.targetPath, cfg.showAll, cfg.showAlmostAll, cfg.humanReadable,
 			cfg.sortBy, cfg.reverseSort, cfg.showInode, cfg.classify, cfg.useColor, cfg.timeStyle,
-			cfg.ignorePatterns, cfg.groupDirsFirst, cfg.singleColumn, cfg.followSymlinks,
+			cfg.ignorePatterns, cfg.groupDirsFirst, cfg.singleColumn, cfg.followSymlinks, cfg.showGitStatus,
 			0, make(map[string]bool))
 	}
 
@@ -262,8 +264,10 @@ func handleDirectory(cfg AppConfig, info os.FileInfo) error {
 		if cfg.singleColumn {
 			fmt.Println(getColoredName(cfg.targetPath, cfg.useColor, cfg.classify, cfg.followSymlinks))
 		} else {
+			fileInfo := FileInfo{Path: cfg.targetPath, Info: info}
+			w := calculateWidths([]FileInfo{fileInfo}, cfg.humanReadable)
 			listFile(cfg.targetPath, nil, "", cfg.humanReadable, cfg.showInode, cfg.classify,
-				cfg.useColor, cfg.timeStyle, cfg.followSymlinks)
+				cfg.useColor, cfg.timeStyle, cfg.followSymlinks, w, cfg.showGitStatus)
 		}
 		return nil
 	}
@@ -292,7 +296,7 @@ func handleDirectory(cfg AppConfig, info os.FileInfo) error {
 
 	return listDirectory(cfg.targetPath, cfg.showAll, cfg.showAlmostAll, cfg.humanReadable,
 		cfg.sortBy, cfg.reverseSort, cfg.showInode, cfg.classify, cfg.useColor, cfg.timeStyle,
-		cfg.ignorePatterns, cfg.groupDirsFirst, cfg.followSymlinks)
+		cfg.ignorePatterns, cfg.groupDirsFirst, cfg.followSymlinks, cfg.showGitStatus)
 }
 
 func handleFile(cfg AppConfig, info os.FileInfo) error {
@@ -302,7 +306,9 @@ func handleFile(cfg AppConfig, info os.FileInfo) error {
 	}
 
 	comment := getComment(cfg.targetPath)
+	fileInfo := FileInfo{Path: cfg.targetPath, Info: info}
+	w := calculateWidths([]FileInfo{fileInfo}, cfg.humanReadable)
 	listFile(cfg.targetPath, info, comment, cfg.humanReadable, cfg.showInode, cfg.classify,
-		cfg.useColor, cfg.timeStyle, cfg.followSymlinks)
+		cfg.useColor, cfg.timeStyle, cfg.followSymlinks, w, cfg.showGitStatus)
 	return nil
 }

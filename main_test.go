@@ -60,9 +60,9 @@ func TestFormatSize(t *testing.T) {
 		size     int64
 		expected string
 	}{
-		{0, "       0"},
-		{1024, "    1024"},
-		{1048576, " 1048576"},
+		{0, "0"},
+		{1024, "1024"},
+		{1048576, "1048576"},
 	}
 
 	for _, tt := range tests {
@@ -79,12 +79,12 @@ func TestFormatSizeHumanReadable(t *testing.T) {
 		size     int64
 		expected string
 	}{
-		{0, "       0B"},           // %8dB = 9 chars
-		{512, "     512B"},         // %8dB = 9 chars
-		{1024, "    1.0K"},         // %7.1f%s = 8 chars
-		{1536, "    1.5K"},         // %7.1f%s = 8 chars
-		{1024 * 1024, "    1.0M"},  // %7.1f%s = 8 chars
-		{1024 * 1024 * 1024, "    1.0G"}, // %7.1f%s = 8 chars
+		{0, "0B"},
+		{512, "512B"},
+		{1024, "1.0K"},
+		{1536, "1.5K"},
+		{1024 * 1024, "1.0M"},
+		{1024 * 1024 * 1024, "1.0G"},
 	}
 
 	for _, tt := range tests {
@@ -187,17 +187,17 @@ func TestShouldUseColor(t *testing.T) {
 	defer os.Setenv("NO_COLOR", origNoColor)
 
 	tests := []struct {
-		name       string
-		colorFlag  string
-		noColor    bool
+		name        string
+		colorFlag   string
+		noColor     bool
 		configColor string
-		noColorEnv string
-		expected   bool
+		noColorEnv  string
+		expected    bool
 	}{
 		{
-			name:      "NO_COLOR set",
+			name:       "NO_COLOR set",
 			noColorEnv: "1",
-			expected:  false,
+			expected:   false,
 		},
 		{
 			name:     "no-color flag",
@@ -210,9 +210,9 @@ func TestShouldUseColor(t *testing.T) {
 			expected:  true,
 		},
 		{
-			name:       "color never",
-			colorFlag:  "never",
-			expected:   false,
+			name:      "color never",
+			colorFlag: "never",
+			expected:  false,
 		},
 	}
 
@@ -648,6 +648,7 @@ func TestListTree(t *testing.T) {
 	if err != nil {
 		t.Errorf("listTree failed: %v", err)
 	}
+	// TODO: verify output contains root.txt
 }
 
 // TestCommentCache tests the xattr caching functionality

@@ -57,7 +57,7 @@ func printHelp() {
 	fmt.Println("  --csv           CSV 格式输出")
 	fmt.Println("  --group-directories-first  目录排在文件前面")
 	fmt.Println("  --ignore=PATTERN   忽略匹配的文件 (支持 * 和 ? 通配符)")
-	fmt.Println("  --gitignore     使用 .gitignore 规则")
+	fmt.Println("  --git           显示 Git 状态")
 	fmt.Println("  --time-style=STYLE  时间显示格式: default, iso, long-iso, full-iso")
 	fmt.Println("  --color=WHEN    颜色输出: always, auto, never")
 	fmt.Println("  --no-color      禁用颜色输出")
@@ -163,8 +163,91 @@ func getColoredName(path string, useColor, classify, followSymlinks bool) string
 	return name
 }
 
+var (
+	userCache  sync.Map
+	groupCache sync.Map
+)
+
+func getUsername(uid uint32) string {
+	uidStr := strconv.FormatUint(uint64(uid), 10)
+	if val, ok := userCache.Load(uidStr); ok {
+		return val.(string)
+	}
+	if u, err := user.LookupId(uidStr); err == nil {
+		userCache.Store(uidStr, u.Username)
+		return u.Username
+	}
+	userCache.Store(uidStr, uidStr)
+	return uidStr
+}
+
+func getGroupname(gid uint32) string {
+	gidStr := strconv.FormatUint(uint64(gid), 10)
+	if val, ok := groupCache.Load(gidStr); ok {
+		return val.(string)
+	}
+	if g, err := user.LookupGroupId(gidStr); err == nil {
+		groupCache.Store(gidStr, g.Name)
+		return g.Name
+	}
+	groupCache.Store(gidStr, gidStr)
+	return gidStr
+}
+
+type OutputWidths struct {
+	Nlink int
+	Owner int
+	Group int
+	Size  int
+}
+
+func calculateWidths(files []FileInfo, humanReadable bool) OutputWidths {
+	w := OutputWidths{
+		Nlink: 2, // minimum widths
+		Owner: 8,
+		Group: 8,
+		Size:  8,
+	}
+
+	for _, f := range files {
+		info := f.Info
+		if info == nil {
+			var err error
+			info, err = os.Lstat(f.Path)
+			if err != nil {
+				continue
+			}
+		}
+		sys, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			continue
+		}
+
+		nlinkStr := strconv.FormatUint(uint64(sys.Nlink), 10)
+		if len(nlinkStr) > w.Nlink {
+			w.Nlink = len(nlinkStr)
+		}
+
+		owner := getUsername(sys.Uid)
+		if len(owner) > w.Owner {
+			w.Owner = len(owner)
+		}
+
+		group := getGroupname(sys.Gid)
+		if len(group) > w.Group {
+			w.Group = len(group)
+		}
+
+		sizeStr := formatSize(info.Size(), humanReadable)
+		if len(sizeStr) > w.Size {
+			w.Size = len(sizeStr)
+		}
+	}
+	return w
+}
+
 // listFile prints a single file's details
-func listFile(path string, info os.FileInfo, comment string, humanReadable, showInode, classify, useColor bool, timeStyle string, followSymlinks bool) {
+func listFile(path string, info os.FileInfo, comment string, humanReadable, showInode, classify, useColor bool, timeStyle string, followSymlinks bool, w OutputWidths, showGit bool) {
 	if info == nil {
 		var err error
 		info, err = os.Lstat(path)
@@ -179,14 +262,8 @@ func listFile(path string, info os.FileInfo, comment string, humanReadable, show
 	gid := sys.Gid
 
 	// Get owner/group names
-	owner := strconv.FormatUint(uint64(uid), 10)
-	group := strconv.FormatUint(uint64(gid), 10)
-	if u, err := user.LookupId(owner); err == nil {
-		owner = u.Username
-	}
-	if g, err := user.LookupGroupId(group); err == nil {
-		group = g.Name
-	}
+	owner := getUsername(uid)
+	group := getGroupname(gid)
 
 	modeStr := formatMode(mode, path)
 	sizeStr := formatSize(info.Size(), humanReadable)
@@ -203,17 +280,42 @@ func listFile(path string, info os.FileInfo, comment string, humanReadable, show
 		indicator = getTypeIndicator(mode, path)
 	}
 
+	gitCol := ""
+	if showGit {
+		status := getGitStatus(path, info.IsDir())
+		if status == "" {
+			status = "  "
+		}
+
+		coloredStatus := status
+		if useColor && status != "  " {
+			if status == "??" {
+				coloredStatus = red + status + reset
+			} else if status == "* " {
+				coloredStatus = blue + status + reset
+			} else if strings.Contains(status, "M") {
+				coloredStatus = yellow + status + reset
+			} else if strings.Contains(status, "A") {
+				coloredStatus = green + status + reset
+			} else if strings.Contains(status, "D") {
+				coloredStatus = red + status + reset
+			}
+		}
+		gitCol = coloredStatus + " "
+	}
+
 	var output string
 	if showInode {
 		output = fmt.Sprintf("%10d ", sys.Ino)
 	}
 
-	output += fmt.Sprintf("%s %2d %-8s %-8s %s %s %s%s",
+	output += fmt.Sprintf("%s%s %*d %-*s %-*s %*s %s %s%s",
+		gitCol,
 		modeStr,
-		sys.Nlink,
-		owner,
-		group,
-		sizeStr,
+		w.Nlink, sys.Nlink,
+		w.Owner, owner,
+		w.Group, group,
+		w.Size, sizeStr,
 		timeStr,
 		nameColored,
 		indicator,
@@ -294,7 +396,7 @@ func fetchCommentsParallel(files []FileInfo) []string {
 }
 
 // listDirectory lists files in a directory
-func listDirectory(dirPath string, showAll, showAlmostAll, humanReadable bool, sortBy string, reverseSort bool, showInode, classify, useColor bool, timeStyle string, ignorePatterns []string, groupDirsFirst, followSymlinks bool) error {
+func listDirectory(dirPath string, showAll, showAlmostAll, humanReadable bool, sortBy string, reverseSort bool, showInode, classify, useColor bool, timeStyle string, ignorePatterns []string, groupDirsFirst, followSymlinks, showGit bool) error {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
 		return fmt.Errorf("cannot open directory '%s': %v", dirPath, err)
@@ -304,8 +406,10 @@ func listDirectory(dirPath string, showAll, showAlmostAll, humanReadable bool, s
 	sortFiles(files, sortBy, reverseSort, groupDirsFirst)
 	comments := fetchCommentsParallel(files)
 
+	w := calculateWidths(files, humanReadable)
+
 	for i, file := range files {
-		listFile(file.Path, file.Info, comments[i], humanReadable, showInode, classify, useColor, timeStyle, followSymlinks)
+		listFile(file.Path, file.Info, comments[i], humanReadable, showInode, classify, useColor, timeStyle, followSymlinks, w, showGit)
 	}
 	return nil
 }
@@ -328,6 +432,12 @@ func listSingleColumn(dirPath string, showAll, showAlmostAll bool, sortBy string
 
 // collectFiles collects file information from directory entries
 func collectFiles(entries []os.DirEntry, dirPath string, showAll, showAlmostAll bool, ignorePatterns []string) []FileInfo {
+	// Convert dirPath to absolute path for consistent file identification (needed for Git status)
+	absDirPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		absDirPath = dirPath
+	}
+
 	files := make([]FileInfo, 0, len(entries))
 
 	for _, entry := range entries {
@@ -338,7 +448,7 @@ func collectFiles(entries []os.DirEntry, dirPath string, showAll, showAlmostAll 
 			continue
 		}
 
-		fullPath := filepath.Join(dirPath, name)
+		fullPath := filepath.Join(absDirPath, name)
 		info, err := entry.Info()
 		if err != nil {
 			continue
@@ -354,7 +464,7 @@ func collectFiles(entries []os.DirEntry, dirPath string, showAll, showAlmostAll 
 
 	if showAll {
 		for _, name := range []string{".", ".."} {
-			fullPath := filepath.Join(dirPath, name)
+			fullPath := filepath.Join(absDirPath, name)
 			info, err := os.Lstat(fullPath)
 			if err != nil {
 				continue
@@ -372,7 +482,7 @@ func collectFiles(entries []os.DirEntry, dirPath string, showAll, showAlmostAll 
 }
 
 // listRecursive lists directory recursively
-func listRecursive(dirPath string, showAll, showAlmostAll, humanReadable bool, sortBy string, reverseSort bool, showInode, classify, useColor bool, timeStyle string, ignorePatterns []string, groupDirsFirst, singleColumn, followSymlinks bool, depth int, visited map[string]bool) error {
+func listRecursive(dirPath string, showAll, showAlmostAll, humanReadable bool, sortBy string, reverseSort bool, showInode, classify, useColor bool, timeStyle string, ignorePatterns []string, groupDirsFirst, singleColumn, followSymlinks, showGit bool, depth int, visited map[string]bool) error {
 	absPath, _ := filepath.Abs(dirPath)
 	if visited[absPath] || depth > maxRecursionDepth {
 		return nil
@@ -389,7 +499,7 @@ func listRecursive(dirPath string, showAll, showAlmostAll, humanReadable bool, s
 			return err
 		}
 	} else {
-		if err := listDirectory(dirPath, showAll, showAlmostAll, humanReadable, sortBy, reverseSort, showInode, classify, useColor, timeStyle, ignorePatterns, groupDirsFirst, followSymlinks); err != nil {
+		if err := listDirectory(dirPath, showAll, showAlmostAll, humanReadable, sortBy, reverseSort, showInode, classify, useColor, timeStyle, ignorePatterns, groupDirsFirst, followSymlinks, showGit); err != nil {
 			return err
 		}
 	}
@@ -402,7 +512,7 @@ func listRecursive(dirPath string, showAll, showAlmostAll, humanReadable bool, s
 	subdirs := getSubdirs(entries, dirPath, showAll, showAlmostAll, ignorePatterns, sortBy, reverseSort)
 
 	for _, subdir := range subdirs {
-		if err := listRecursive(subdir, showAll, showAlmostAll, humanReadable, sortBy, reverseSort, showInode, classify, useColor, timeStyle, ignorePatterns, groupDirsFirst, singleColumn, followSymlinks, depth+1, visited); err != nil {
+		if err := listRecursive(subdir, showAll, showAlmostAll, humanReadable, sortBy, reverseSort, showInode, classify, useColor, timeStyle, ignorePatterns, groupDirsFirst, singleColumn, followSymlinks, showGit, depth+1, visited); err != nil {
 			return err
 		}
 	}
@@ -435,6 +545,12 @@ func shouldIncludeEntry(name string, isDir bool, showAll, showAlmostAll bool, ig
 func getSubdirs(entries []os.DirEntry, dirPath string, showAll, showAlmostAll bool, ignorePatterns []string, sortBy string, reverse bool) []string {
 	var subdirs []FileInfo
 
+	// Convert dirPath to absolute path
+	absDirPath, err := filepath.Abs(dirPath)
+	if err != nil {
+		absDirPath = dirPath
+	}
+
 	for _, entry := range entries {
 		name := entry.Name()
 
@@ -443,7 +559,7 @@ func getSubdirs(entries []os.DirEntry, dirPath string, showAll, showAlmostAll bo
 		}
 
 		if entry.IsDir() {
-			fullPath := filepath.Join(dirPath, name)
+			fullPath := filepath.Join(absDirPath, name)
 			info, _ := entry.Info()
 			subdirs = append(subdirs, FileInfo{
 				Name:  name,

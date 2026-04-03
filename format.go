@@ -38,10 +38,10 @@ func formatMode(mode os.FileMode, path string) string {
 	return result.String()
 }
 
-// formatSize formats file size
+// formatSize formats file size without padding
 func formatSize(size int64, human bool) string {
 	if !human {
-		return fmt.Sprintf("%8d", size)
+		return fmt.Sprintf("%d", size)
 	}
 
 	units := []string{"B", "K", "M", "G", "T", "P"}
@@ -54,10 +54,12 @@ func formatSize(size int64, human bool) string {
 	}
 
 	if unitIndex == 0 {
-		return fmt.Sprintf("%8dB", size)
+		return fmt.Sprintf("%dB", size)
 	}
-	return fmt.Sprintf("%7.1f%s", value, units[unitIndex])
+	return fmt.Sprintf("%.1f%s", value, units[unitIndex])
 }
+
+var currentYear = time.Now().Year()
 
 // formatTime formats time according to style
 func formatTime(t time.Time, style string) string {
@@ -69,7 +71,7 @@ func formatTime(t time.Time, style string) string {
 	case "full-iso":
 		return t.Format(dateFormatFullISO)
 	default:
-		if t.Year() == time.Now().Year() {
+		if t.Year() == currentYear {
 			return t.Format(dateFormatDefault)
 		}
 		return t.Format(dateFormatDefaultYear)
