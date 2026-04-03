@@ -517,7 +517,9 @@ func listTree(dirPath string, showAll, showAlmostAll bool, sortBy string, revers
 			if isLast {
 				extension = "    "
 			}
-			listTree(file.Path, showAll, showAlmostAll, sortBy, reverseSort, ignorePatterns, groupDirsFirst, followSymlinks, prefix+extension)
+			if err := listTree(file.Path, showAll, showAlmostAll, sortBy, reverseSort, ignorePatterns, groupDirsFirst, followSymlinks, prefix+extension); err != nil {
+				return err
+			}
 		}
 	}
 

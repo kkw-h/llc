@@ -688,5 +688,7 @@ func TestCommentCache(t *testing.T) {
 	}
 
 	// Clean up
-	unix.Removexattr(tmpFile.Name(), xattrCommentName)
+	if err := unix.Removexattr(tmpFile.Name(), xattrCommentName); err != nil {
+		t.Logf("Failed to remove xattr: %v", err)
+	}
 }
