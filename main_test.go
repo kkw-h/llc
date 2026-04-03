@@ -535,7 +535,7 @@ func TestListDirectory(t *testing.T) {
 	// Test basic listing
 	t.Run("basic listing", func(t *testing.T) {
 		// Just verify it doesn't panic
-		err := listDirectory(tmpDir, false, false, false, "name", false, false, false, false, "", []string{}, false, false)
+		err := listDirectory(tmpDir, false, false, false, "name", false, false, false, false, "", []string{}, false, false, false)
 		if err != nil {
 			t.Errorf("listDirectory failed: %v", err)
 		}
@@ -563,7 +563,7 @@ func TestListRecursive(t *testing.T) {
 	// Test recursive listing
 	t.Run("recursive listing", func(t *testing.T) {
 		visited := make(map[string]bool)
-		err := listRecursive(tmpDir, false, false, false, "name", false, false, false, false, "", []string{}, false, false, false, 0, visited)
+		err := listRecursive(tmpDir, false, false, false, "name", false, false, false, false, "", []string{}, false, false, false, false, 0, visited)
 		if err != nil {
 			t.Errorf("listRecursive failed: %v", err)
 		}
