@@ -553,8 +553,12 @@ func TestListRecursive(t *testing.T) {
 	}
 
 	// Create files
-	os.WriteFile(filepath.Join(tmpDir, "root.txt"), []byte("test"), 0644)
-	os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("test"), 0644)
+	if err := os.WriteFile(filepath.Join(tmpDir, "root.txt"), []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to create root.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to create nested.txt: %v", err)
+	}
 
 	// Test recursive listing
 	t.Run("recursive listing", func(t *testing.T) {
@@ -601,7 +605,9 @@ node_modules/
 // TestOutputJSON tests the JSON output function
 func TestOutputJSON(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("content"), 0644)
+	if err := os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
 
 	err := outputJSON(tmpDir, false, false, "name", false, []string{}, false)
 	if err != nil {
@@ -612,7 +618,9 @@ func TestOutputJSON(t *testing.T) {
 // TestOutputCSV tests the CSV output function
 func TestOutputCSV(t *testing.T) {
 	tmpDir := t.TempDir()
-	os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("content"), 0644)
+	if err := os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("content"), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
 
 	err := outputCSV(tmpDir, false, false, "name", false, []string{}, false)
 	if err != nil {
@@ -626,9 +634,15 @@ func TestListTree(t *testing.T) {
 
 	// Create directory structure
 	subDir := filepath.Join(tmpDir, "subdir")
-	os.MkdirAll(subDir, 0755)
-	os.WriteFile(filepath.Join(tmpDir, "root.txt"), []byte("test"), 0644)
-	os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("test"), 0644)
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "root.txt"), []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to create root.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("test"), 0644); err != nil {
+		t.Fatalf("Failed to create nested.txt: %v", err)
+	}
 
 	err := listTree(tmpDir, false, false, "name", false, []string{}, false, false, "")
 	if err != nil {

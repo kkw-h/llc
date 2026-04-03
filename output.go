@@ -25,24 +25,6 @@ type FileInfo struct {
 	IsDir   bool
 }
 
-// fileInfoPool is a sync.Pool for reusing FileInfo slices
-var fileInfoPool = sync.Pool{
-	New: func() interface{} {
-		return make([]FileInfo, 0, 256)
-	},
-}
-
-// getFileInfoSlice gets a FileInfo slice from the pool
-func getFileInfoSlice() []FileInfo {
-	return fileInfoPool.Get().([]FileInfo)
-}
-
-// putFileInfoSlice returns a FileInfo slice to the pool
-func putFileInfoSlice(s []FileInfo) {
-	// Reset the slice (keep the capacity, clear the elements)
-	fileInfoPool.Put(s[:0])
-}
-
 // printVersion prints version information
 func printVersion() {
 	fmt.Printf("llc version %s\n", version)
@@ -346,7 +328,7 @@ func listSingleColumn(dirPath string, showAll, showAlmostAll bool, sortBy string
 
 // collectFiles collects file information from directory entries
 func collectFiles(entries []os.DirEntry, dirPath string, showAll, showAlmostAll bool, ignorePatterns []string) []FileInfo {
-	files := getFileInfoSlice()
+	files := make([]FileInfo, 0, len(entries))
 
 	for _, entry := range entries {
 		name := entry.Name()
@@ -597,11 +579,13 @@ func outputCSV(dirPath string, showAll, showAlmostAll bool, sortBy string, rever
 	defer writer.Flush()
 
 	// Write header
-	writer.Write([]string{"Name", "Path", "Size", "Mode", "ModTime", "IsDir", "Comment"})
+	if err := writer.Write([]string{"Name", "Path", "Size", "Mode", "ModTime", "IsDir", "Comment"}); err != nil {
+		return fmt.Errorf("failed to write CSV header: %v", err)
+	}
 
 	// Write data
 	for i, file := range files {
-		writer.Write([]string{
+		if err := writer.Write([]string{
 			file.Name,
 			file.Path,
 			strconv.FormatInt(file.Info.Size(), 10),
@@ -609,7 +593,9 @@ func outputCSV(dirPath string, showAll, showAlmostAll bool, sortBy string, rever
 			file.Info.ModTime().Format(time.RFC3339),
 			strconv.FormatBool(file.IsDir),
 			comments[i],
-		})
+		}); err != nil {
+			return fmt.Errorf("failed to write CSV row: %v", err)
+		}
 	}
 
 	return nil
