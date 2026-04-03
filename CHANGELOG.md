@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2025-04-03
+
+### Added
+- **Git status display**: New `--git` flag to show Git status in listings
+  - Shows `??` for untracked files
+  - Shows `M` for modified files
+  - Shows `*` for directories with changes inside
+  - Caches Git status for performance
+- **User/Group caching**: Caches user/group name lookups using sync.Map
+- **Dynamic column widths**: Column widths are now calculated based on content
+
+### Changed
+- **Format size**: Removed fixed-width padding for cleaner output
+- **Code quality improvements**:
+  - Added Git status code constants
+  - Improved error handling in tests
+  - Added nil pointer checks
+
 ## [2.1.0] - 2025-04-02
 
 ### Added
@@ -73,7 +91,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - macOS support only
 - Spotlight/Finder comments integration
 
-[Unreleased]: https://github.com/kkw-h/llc/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/kkw-h/llc/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/kkw-h/llc/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/kkw-h/llc/compare/v2.0.2...v2.1.0
 [2.0.2]: https://github.com/kkw-h/llc/compare/v2.0.1...v2.0.2
 [2.0.1]: https://github.com/kkw-h/llc/compare/v2.0.0...v2.0.1
