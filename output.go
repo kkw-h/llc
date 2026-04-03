@@ -57,6 +57,7 @@ func printHelp() {
 	fmt.Println("  --csv           CSV 格式输出")
 	fmt.Println("  --group-directories-first  目录排在文件前面")
 	fmt.Println("  --ignore=PATTERN   忽略匹配的文件 (支持 * 和 ? 通配符)")
+	fmt.Println("  --gitignore     使用 .gitignore 规则")
 	fmt.Println("  --git           显示 Git 状态")
 	fmt.Println("  --time-style=STYLE  时间显示格式: default, iso, long-iso, full-iso")
 	fmt.Println("  --color=WHEN    颜色输出: always, auto, never")
@@ -219,7 +220,7 @@ func calculateWidths(files []FileInfo, humanReadable bool) OutputWidths {
 			}
 		}
 		sys, ok := info.Sys().(*syscall.Stat_t)
-		if !ok {
+		if !ok || sys == nil {
 			continue
 		}
 

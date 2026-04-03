@@ -9,6 +9,18 @@ import (
 	"sync"
 )
 
+// Git 状态码常量
+const (
+	gitUntracked = "??"
+	gitModified  = "M"
+	gitAdded     = "A"
+	gitDeleted   = "D"
+	gitRenamed   = "R"
+	gitCopied    = "C"
+	gitUpdated   = "U"
+	gitDirty     = "*" // 目录内有修改的自定义标记
+)
+
 var (
 	gitRootCache   sync.Map // dir -> git root
 	gitStatusCache sync.Map // git root -> status map
@@ -52,13 +64,13 @@ func getGitStatus(path string, isDir bool) string {
 	current := path
 	for current != gitRoot && current != "/" && current != "." {
 		if status, ok := statusMap[current]; ok {
-			if status == "??" || status == "A " || status == "AM" || status == "M " || status == "* " {
+			if isSignificantStatus(status) {
 				return status
 			}
 		}
 		// Also check with trailing slash which git sometimes uses for directories
 		if status, ok := statusMap[current+"/"]; ok {
-			if status == "??" || status == "A " || status == "AM" || status == "M " || status == "* " {
+			if isSignificantStatus(status) {
 				return status
 			}
 		}
@@ -97,7 +109,12 @@ func computeGitStatusMap(gitRoot string) map[string]string {
 	// Add -u to ensure untracked files are reported
 	cmd := exec.Command("git", "-C", gitRoot, "status", "--porcelain", "-z", "-u")
 	out, err := cmd.Output()
-	if err != nil || len(out) == 0 {
+	if err != nil {
+		// Git 命令失败（可能不是 git 仓库），返回空 map
+		return statusMap
+	}
+	if len(out) == 0 {
+		// 没有状态变更，返回空 map
 		return statusMap
 	}
 
@@ -134,32 +151,47 @@ func computeGitStatusMap(gitRoot string) map[string]string {
 		// Propagate to parent directories
 		parent := filepath.Dir(cleanPath)
 		for parent != gitRoot && parent != "/" && parent != "." {
-			if existing, exists := statusMap[parent]; !exists || existing == "??" {
+			if existing, exists := statusMap[parent]; !exists || strings.HasPrefix(existing, gitUntracked) {
 				// We use * to indicate a directory has modified/untracked files inside
-				if status == "??" {
-					statusMap[parent] = "??"
+				if strings.HasPrefix(status, gitUntracked) {
+					statusMap[parent] = gitUntracked + " "
 				} else {
-					statusMap[parent] = "* "
+					statusMap[parent] = gitDirty + " "
 				}
 			}
 			parent = filepath.Dir(parent)
 		}
 		// Also mark git root if needed
 		if parent == gitRoot {
-			if existing, exists := statusMap[parent]; !exists || existing == "??" {
-				if status == "??" {
-					statusMap[parent] = "??"
+			if existing, exists := statusMap[parent]; !exists || strings.HasPrefix(existing, gitUntracked) {
+				if strings.HasPrefix(status, gitUntracked) {
+					statusMap[parent] = gitUntracked + " "
 				} else {
-					statusMap[parent] = "* "
+					statusMap[parent] = gitDirty + " "
 				}
 			}
 		}
 
 		// Skip the old path part if it's a rename
-		if status[0] == 'R' || status[0] == 'C' {
+		if len(status) > 0 && (status[0] == gitRenamed[0] || status[0] == gitCopied[0]) {
 			i++
 		}
 	}
 
 	return statusMap
+}
+
+// isSignificantStatus checks if a status code is significant enough to display
+func isSignificantStatus(status string) bool {
+	if len(status) == 0 {
+		return false
+	}
+	// 检查第一列（暂存区）或第二列（工作区）是否有重要状态
+	significant := []string{gitUntracked, gitModified, gitAdded, gitDeleted, gitDirty}
+	for _, s := range significant {
+		if strings.Contains(status, s) {
+			return true
+		}
+	}
+	return false
 }
