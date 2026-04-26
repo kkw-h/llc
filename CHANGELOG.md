@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.2.0] - 2025-04-03
+## [2.2.0] - 2026-04-26
 
 ### Added
 - **Git status display**: New `--git` flag to show Git status in listings
@@ -20,10 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Format size**: Removed fixed-width padding for cleaner output
+- **Comment rendering**: Comments now default to plain terminal text for reliable contrast across light and dark terminal themes
 - **Code quality improvements**:
   - Added Git status code constants
   - Improved error handling in tests
   - Added nil pointer checks
+
+### Fixed
+- Restored support for the documented `--sort=ext` flag
+- Fixed `-a` output to display `.` and `..` correctly in single-column mode
+- Fixed single-file symlink listing to only follow links when `-L` is explicitly set
 
 ## [2.1.0] - 2025-04-02
 

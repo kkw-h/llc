@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,34 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Failed to create stdout pipe: %v", err)
+	}
+
+	os.Stdout = w
+	defer func() {
+		os.Stdout = oldStdout
+	}()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("Failed to close stdout writer: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("Failed to read captured stdout: %v", err)
+	}
+
+	return buf.String()
+}
 
 // TestFormatMode tests the formatMode function
 func TestFormatMode(t *testing.T) {
@@ -691,5 +721,88 @@ func TestCommentCache(t *testing.T) {
 	// Clean up
 	if err := unix.Removexattr(tmpFile.Name(), xattrCommentName); err != nil {
 		t.Logf("Failed to remove xattr: %v", err)
+	}
+}
+
+func TestListSingleColumnShowAllUsesDotEntries(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	output := captureStdout(t, func() {
+		err := listSingleColumn(tmpDir, true, false, "name", false, false, false, []string{}, false, false)
+		if err != nil {
+			t.Fatalf("listSingleColumn failed: %v", err)
+		}
+	})
+
+	lines := strings.Fields(output)
+	if len(lines) < 2 {
+		t.Fatalf("Expected at least 2 lines, got %q", output)
+	}
+
+	if lines[0] != "." || lines[1] != ".." {
+		t.Fatalf("Expected leading dot entries, got %q", output)
+	}
+}
+
+func TestHandleFileDoesNotFollowSymlinkByDefault(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	target := filepath.Join(tmpDir, "target.txt")
+	if err := os.WriteFile(target, []byte("target"), 0644); err != nil {
+		t.Fatalf("Failed to create target: %v", err)
+	}
+
+	link := filepath.Join(tmpDir, "link.txt")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("Failed to create symlink: %v", err)
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("Failed to stat symlink: %v", err)
+	}
+
+	output := captureStdout(t, func() {
+		err := handleFile(AppConfig{
+			Options: Options{
+				noColor: true,
+			},
+			useColor:   false,
+			targetPath: link,
+		}, info)
+		if err != nil {
+			t.Fatalf("handleFile failed: %v", err)
+		}
+	})
+
+	if !strings.HasPrefix(output, "lrwx") {
+		t.Fatalf("Expected symlink mode in output, got %q", output)
+	}
+}
+
+func TestBuildConfigSupportsSortFlag(t *testing.T) {
+	cfg := buildConfig(Options{sortFlag: "ext"})
+	if cfg.sortBy != "ext" {
+		t.Fatalf("Expected sortBy=ext, got %q", cfg.sortBy)
+	}
+}
+
+func TestGetCommentColorCode(t *testing.T) {
+	orig := os.Getenv("LLC_COMMENT_COLOR")
+	defer os.Setenv("LLC_COMMENT_COLOR", orig)
+
+	os.Setenv("LLC_COMMENT_COLOR", "")
+	if got := getCommentColorCode(); got != "" {
+		t.Fatalf("Expected empty color code by default, got %q", got)
+	}
+
+	os.Setenv("LLC_COMMENT_COLOR", "yellow")
+	if got := getCommentColorCode(); got != yellow {
+		t.Fatalf("Expected yellow color code, got %q", got)
+	}
+
+	os.Setenv("LLC_COMMENT_COLOR", "invalid")
+	if got := getCommentColorCode(); got != "" {
+		t.Fatalf("Expected invalid color to fall back to plain text, got %q", got)
 	}
 }

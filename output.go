@@ -84,15 +84,19 @@ func printHelp() {
 	fmt.Println("平台说明:")
 	fmt.Println("  Linux: 注释存储在 xattr 扩展属性中 (user.llc.comment)")
 	fmt.Println("  macOS: 注释存储在 Spotlight 元数据中 (kMDItemFinderComment)")
+	fmt.Println("")
+	fmt.Println("环境变量:")
+	fmt.Println("  NO_COLOR=1           禁用所有颜色输出")
+	fmt.Println("  LLC_COMMENT_COLOR    备注颜色: none(default), gray, red, green, yellow, blue, cyan")
 }
 
 // colorizeName returns the name with color codes
-func colorizeName(path string, mode os.FileMode, useColor bool, followSymlinks bool) string {
+func colorizeName(path, displayName string, mode os.FileMode, useColor bool, followSymlinks bool) string {
 	if !useColor {
-		return filepath.Base(path)
+		return displayName
 	}
 
-	name := filepath.Base(path)
+	name := displayName
 
 	// Handle symlinks
 	if followSymlinks && mode&os.ModeSymlink != 0 {
@@ -127,17 +131,17 @@ func colorizeName(path string, mode os.FileMode, useColor bool, followSymlinks b
 }
 
 // getColoredName returns filename with color and type indicator
-func getColoredName(path string, useColor, classify, followSymlinks bool) string {
+func getColoredName(path, displayName string, useColor, classify, followSymlinks bool) string {
 	if !useColor && !classify {
-		return filepath.Base(path)
+		return displayName
 	}
 
 	info, err := os.Lstat(path)
 	if err != nil {
-		return filepath.Base(path)
+		return displayName
 	}
 
-	name := filepath.Base(path)
+	name := displayName
 	mode := info.Mode()
 
 	// Resolve symlink if needed
@@ -154,7 +158,7 @@ func getColoredName(path string, useColor, classify, followSymlinks bool) string
 	}
 
 	if useColor {
-		name = colorizeName(path, info.Mode(), useColor, followSymlinks)
+		name = colorizeName(path, displayName, info.Mode(), useColor, followSymlinks)
 	}
 
 	if classify {
@@ -273,7 +277,7 @@ func listFile(path string, info os.FileInfo, comment string, humanReadable, show
 	name := filepath.Base(path)
 	nameColored := name
 	if useColor {
-		nameColored = colorizeName(path, mode, useColor, followSymlinks)
+		nameColored = colorizeName(path, name, mode, useColor, followSymlinks)
 	}
 
 	indicator := ""
@@ -323,11 +327,13 @@ func listFile(path string, info os.FileInfo, comment string, humanReadable, show
 	)
 
 	if comment != "" {
+		commentText := fmt.Sprintf("[%s]", comment)
 		if useColor {
-			output += fmt.Sprintf("  %s[%s]%s", gray, comment, reset)
-		} else {
-			output += fmt.Sprintf("  [%s]", comment)
+			if commentColor := getCommentColorCode(); commentColor != "" {
+				commentText = commentColor + commentText + reset
+			}
 		}
+		output += "  " + commentText
 	}
 
 	fmt.Println(output)
@@ -426,7 +432,7 @@ func listSingleColumn(dirPath string, showAll, showAlmostAll bool, sortBy string
 	sortFiles(files, sortBy, reverseSort, groupDirsFirst)
 
 	for _, file := range files {
-		fmt.Println(getColoredName(file.Path, useColor, classify, followSymlinks))
+		fmt.Println(getColoredName(file.Path, file.Name, useColor, classify, followSymlinks))
 	}
 	return nil
 }

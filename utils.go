@@ -105,6 +105,29 @@ func shouldIgnore(name string, patterns []string) bool {
 	return false
 }
 
+// getCommentColorCode returns the ANSI color code for comments.
+// Default is plain text to avoid poor contrast against unknown terminal themes.
+func getCommentColorCode() string {
+	switch strings.ToLower(os.Getenv("LLC_COMMENT_COLOR")) {
+	case "", "none", "plain", "default":
+		return ""
+	case "gray", "grey":
+		return gray
+	case "red":
+		return red
+	case "green":
+		return green
+	case "yellow":
+		return yellow
+	case "blue":
+		return blue
+	case "cyan":
+		return cyan
+	default:
+		return ""
+	}
+}
+
 // getTypeIndicator returns the type indicator character for -F flag
 func getTypeIndicator(mode os.FileMode, path string) string {
 	switch {

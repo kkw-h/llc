@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 // Application constants
@@ -65,6 +66,7 @@ type Options struct {
 	outputJSON      bool
 	outputCSV       bool
 	outputTree      bool
+	sortFlag        string
 	colorFlag       string
 	noColor         bool
 	timeStyle       string
@@ -138,6 +140,7 @@ func parseFlags() Options {
 	flag.BoolVar(&opts.outputJSON, "json", false, "JSON 格式输出")
 	flag.BoolVar(&opts.outputCSV, "csv", false, "CSV 格式输出")
 	flag.BoolVar(&opts.outputTree, "tree", false, "树形输出")
+	flag.StringVar(&opts.sortFlag, "sort", "", "排序方式: name, time, access, create, size, ext")
 	flag.StringVar(&opts.colorFlag, "color", "", "颜色输出: always, auto, never")
 	flag.BoolVar(&opts.noColor, "no-color", false, "禁用颜色")
 	flag.StringVar(&opts.timeStyle, "time-style", "", "时间格式: default, iso, long-iso, full-iso")
@@ -175,7 +178,9 @@ func buildConfig(opts Options) AppConfig {
 
 	// Determine sort method
 	cfg.sortBy = "name"
-	if opts.sortByTime {
+	if opts.sortFlag != "" {
+		cfg.sortBy = opts.sortFlag
+	} else if opts.sortByTime {
 		cfg.sortBy = "time"
 	} else if opts.sortBySize {
 		cfg.sortBy = "size"
@@ -233,7 +238,12 @@ func handleEditComment(cfg AppConfig) error {
 }
 
 func executeList(cfg AppConfig) error {
-	info, err := os.Stat(cfg.targetPath)
+	statFn := os.Lstat
+	if cfg.followSymlinks {
+		statFn = os.Stat
+	}
+
+	info, err := statFn(cfg.targetPath)
 	if err != nil {
 		return fmt.Errorf("cannot access '%s': %v", cfg.targetPath, err)
 	}
@@ -262,7 +272,7 @@ func handleDirectory(cfg AppConfig, info os.FileInfo) error {
 
 	if cfg.listDirSelf {
 		if cfg.singleColumn {
-			fmt.Println(getColoredName(cfg.targetPath, cfg.useColor, cfg.classify, cfg.followSymlinks))
+			fmt.Println(getColoredName(cfg.targetPath, filepath.Base(cfg.targetPath), cfg.useColor, cfg.classify, cfg.followSymlinks))
 		} else {
 			fileInfo := FileInfo{Path: cfg.targetPath, Info: info}
 			w := calculateWidths([]FileInfo{fileInfo}, cfg.humanReadable)
@@ -301,7 +311,7 @@ func handleDirectory(cfg AppConfig, info os.FileInfo) error {
 
 func handleFile(cfg AppConfig, info os.FileInfo) error {
 	if cfg.singleColumn {
-		fmt.Println(getColoredName(cfg.targetPath, cfg.useColor, cfg.classify, cfg.followSymlinks))
+		fmt.Println(getColoredName(cfg.targetPath, filepath.Base(cfg.targetPath), cfg.useColor, cfg.classify, cfg.followSymlinks))
 		return nil
 	}
 
